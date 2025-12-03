@@ -1,0 +1,13 @@
+services:
+  ui:
+    build:
+      context: .
+      dockerfile: docker/streamlit.Dockerfile
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./app:/workspace/app
+      - ./data:/workspace/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/workspace/app
