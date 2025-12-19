@@ -108,7 +108,9 @@ DEFAULT_PRESET: StrategyPreset = {
     "exit_level": "mid",
     
     # Risk
-    "use_stop": False,
+    # Defaulting to *no stop* while also defaulting to margin/futures is a
+    # recipe for liquidation in trending markets. Keep the default safe.
+    "use_stop": True,
     "stop_mode": "Fixed %",
     "stop_pct": 2.0,
     "stop_atr_mult": 2.0,
@@ -119,10 +121,10 @@ DEFAULT_PRESET: StrategyPreset = {
     "risk_per_trade_pct": 1.0,
     
     # Trade mode
-    "trade_mode": "Margin / Futures",
-    "max_leverage": 5.0,
-    "maintenance_margin_pct": 0.5,
-    "max_margin_utilization": 70.0,
+    "trade_mode": "Simple (1x spot-style)",
+    "max_leverage": None,
+    "maintenance_margin_pct": None,
+    "max_margin_utilization": None,
 }
 
 

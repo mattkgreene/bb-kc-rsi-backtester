@@ -318,8 +318,9 @@ def run_strategy_loop(
     # per-bar calculations. This provides significant speedup for large datasets.
     
     # Band touch conditions (vectorized)
-    touch_kc_vec = (close >= kc_up) & ~np.isnan(kc_up)
-    touch_bb_vec = (close >= bb_up) & ~np.isnan(bb_up)
+    # Use HIGH for "touch" to match typical intrabar band-touch semantics.
+    touch_kc_vec = (high >= kc_up) & ~np.isnan(kc_up)
+    touch_bb_vec = (high >= bb_up) & ~np.isnan(bb_up)
     
     if entry_band_mode == "KC":
         band_ok_vec = touch_kc_vec
@@ -835,10 +836,25 @@ def compute_stats(
             "max_consecutive_losses": 0,
         })
 
+    # Prefer net PnL-based metrics when available (includes commissions and sizing).
+    has_pnl = "RealizedPnL" in trades.columns
+    has_eq_before = "EquityBefore" in trades.columns
+
+    # "ReturnPct" is the per-unit price move and does NOT include fees.
     ret = trades["ReturnPct"].astype(float)
-    wins = ret > 0
-    pos_sum = float(ret[ret > 0].sum())
-    neg_sum = float(ret[ret < 0].sum())
+
+    if has_pnl:
+        pnl = pd.to_numeric(trades["RealizedPnL"], errors="coerce").astype(float)
+        wins = pnl > 0
+
+        gross_profit = float(pnl[pnl > 0].sum())
+        gross_loss = float(pnl[pnl < 0].sum())  # negative
+        pos_sum = gross_profit
+        neg_sum = gross_loss
+    else:
+        wins = ret > 0
+        pos_sum = float(ret[ret > 0].sum())
+        neg_sum = float(ret[ret < 0].sum())
     td = _tf_delta(params.get("timeframe", "1h"))
     avg_bars = (trades["ExitBar"] - trades["EntryBar"]).mean() if len(trades) else 0
 
@@ -864,14 +880,21 @@ def compute_stats(
         tf_hours = td.total_seconds() / 3600
         trades_per_year = 365 * 24 / tf_hours  # Approximate bars per year
         
-        ret_mean = ret.mean()
-        ret_std = ret.std()
+        # Use equity-relative returns if possible; otherwise fall back to per-unit price move returns.
+        if has_pnl and has_eq_before:
+            eq_before = pd.to_numeric(trades["EquityBefore"], errors="coerce").astype(float)
+            rets_for_risk = (pnl / eq_before.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).dropna()
+        else:
+            rets_for_risk = ret.replace([np.inf, -np.inf], np.nan).dropna()
+
+        ret_mean = rets_for_risk.mean() if len(rets_for_risk) else 0.0
+        ret_std = rets_for_risk.std() if len(rets_for_risk) else 0.0
         
         if ret_std > 0:
             sharpe_ratio = (ret_mean / ret_std) * math.sqrt(trades_per_year)
         
         # Sortino uses only downside deviation
-        downside_returns = ret[ret < 0]
+        downside_returns = rets_for_risk[rets_for_risk < 0] if len(rets_for_risk) else rets_for_risk
         if len(downside_returns) > 0:
             downside_std = downside_returns.std()
             if downside_std > 0:
@@ -910,10 +933,19 @@ def compute_stats(
     stats = {
         "trades": len(trades),
         "win_rate": float(wins.mean()) * 100.0,
-        "avg_return_pct": float(ret.mean()) * 100.0,
-        "median_return_pct": float(ret.median()) * 100.0,
-        "best_return_pct": float(ret.max()) * 100.0,
-        "worst_return_pct": float(ret.min()) * 100.0,
+        # Return stats: prefer equity-relative net returns when possible.
+        "avg_return_pct": float(
+            (pnl / pd.to_numeric(trades["EquityBefore"], errors="coerce").replace(0, np.nan)).mean() * 100.0
+        ) if (has_pnl and has_eq_before) else float(ret.mean()) * 100.0,
+        "median_return_pct": float(
+            (pnl / pd.to_numeric(trades["EquityBefore"], errors="coerce").replace(0, np.nan)).median() * 100.0
+        ) if (has_pnl and has_eq_before) else float(ret.median()) * 100.0,
+        "best_return_pct": float(
+            (pnl / pd.to_numeric(trades["EquityBefore"], errors="coerce").replace(0, np.nan)).max() * 100.0
+        ) if (has_pnl and has_eq_before) else float(ret.max()) * 100.0,
+        "worst_return_pct": float(
+            (pnl / pd.to_numeric(trades["EquityBefore"], errors="coerce").replace(0, np.nan)).min() * 100.0
+        ) if (has_pnl and has_eq_before) else float(ret.min()) * 100.0,
         "profit_factor": math.inf if neg_sum == 0 else (pos_sum / abs(neg_sum)),
         "avg_duration": avg_bars * td,
         "total_equity_return_pct": total_equity_return_pct,
