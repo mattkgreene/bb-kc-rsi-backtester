@@ -4,7 +4,8 @@ from core.utils import cmp, calculate_drawdown
 from core.presets import STRATEGY_PRESETS, get_preset_names, DEFAULT_PRESET
 from optimization.grid_search import (
     run_grid_search, create_custom_grid, analyze_results,
-    DEFAULT_PARAM_GRID, QUICK_PARAM_GRID
+    DEFAULT_PARAM_GRID, QUICK_PARAM_GRID,
+    ResultConstraints, WalkForwardConfig, run_walk_forward_grid_search
 )
 from backtest.engine import run_backtest
 from discovery.database import DiscoveryDatabase, WinCriteria, BacktestRun
@@ -366,7 +367,7 @@ with st.sidebar:
         timeframe = st.selectbox("Timeframe", ["30m", "1h", "4h", "1d"], index=0)
 
         today = dt.datetime.utcnow().date()
-        default_start = dt.date(2023, 10, 1)
+        default_start = dt.date(2022, 1, 1)
         date_range = st.date_input(
             "Date range (UTC)",
             value=(default_start, today),
@@ -943,6 +944,12 @@ if st.session_state.get("run_ready", False) and st.session_state.results is not 
             
             with opt_col2:
                 st.subheader("Optimization Settings")
+
+                opt_validation_mode = st.radio(
+                    "Validation mode",
+                    ["In-sample (single window)", "Walk-forward (train/test)"],
+                    horizontal=True
+                )
                 
                 # Optimization metric
                 opt_metric = st.selectbox(
@@ -971,6 +978,30 @@ if st.session_state.get("run_ready", False) and st.session_state.results is not 
                     value=5,
                     help="Skip configurations with fewer trades"
                 )
+
+                st.subheader("Hard Constraints (optional)")
+                min_pf = st.number_input(
+                    "Min Profit Factor (0 = off)",
+                    min_value=0.0, max_value=10.0, value=0.0, step=0.1
+                )
+                min_wr = st.number_input(
+                    "Min Win Rate % (0 = off)",
+                    min_value=0.0, max_value=100.0, value=0.0, step=1.0
+                )
+                max_dd = st.number_input(
+                    "Max Drawdown % (0 = off)",
+                    min_value=0.0, max_value=100.0, value=0.0, step=1.0
+                )
+                min_total_ret = st.number_input(
+                    "Min Total Return % (0 = off)",
+                    min_value=-100.0, max_value=1000.0, value=0.0, step=1.0
+                )
+
+                if opt_validation_mode == "Walk-forward (train/test)":
+                    st.subheader("Walk-forward settings")
+                    wf_train_days = st.number_input("Train window (days)", min_value=30, max_value=3650, value=180, step=30)
+                    wf_test_days = st.number_input("Test window (days)", min_value=7, max_value=365, value=30, step=7)
+                    wf_max_folds = st.number_input("Max folds (0 = all)", min_value=0, max_value=200, value=8, step=1)
             
             # Calculate expected combinations
             param_grid = create_custom_grid(
@@ -986,7 +1017,28 @@ if st.session_state.get("run_ready", False) and st.session_state.results is not 
             for v in param_grid.values():
                 total_combos *= len(v)
             
-            st.info(f"**{total_combos:,} combinations** will be tested. Estimated time: ~{total_combos // 10} seconds.")
+            constraints = ResultConstraints(
+                min_trades=int(min_trades),
+                min_profit_factor=(float(min_pf) if min_pf and min_pf > 0 else None),
+                min_win_rate=(float(min_wr) if min_wr and min_wr > 0 else None),
+                max_drawdown=(float(max_dd) if max_dd and max_dd > 0 else None),
+                # Treat 0 as "off" to match UI label (even though 0 can be meaningful).
+                min_total_return=(float(min_total_ret) if (min_total_ret is not None and float(min_total_ret) != 0.0) else None),
+            )
+
+            if opt_validation_mode == "Walk-forward (train/test)":
+                # crude estimate of how many folds we can fit
+                try:
+                    df_days = max(0, (results["df"].index.max() - results["df"].index.min()).days)
+                    est_folds = max(0, (df_days - int(wf_train_days)) // max(1, int(wf_test_days)))
+                except Exception:
+                    est_folds = 0
+                st.info(
+                    f"Grid size: **{total_combos:,}** per fold. "
+                    f"Estimated folds: **{est_folds}** (capped by Max folds)."
+                )
+            else:
+                st.info(f"**{total_combos:,} combinations** will be tested. Estimated time: ~{total_combos // 10} seconds.")
             
             # Run button
             if st.button("🚀 Run Optimization", type="primary"):
@@ -1002,67 +1054,118 @@ if st.session_state.get("run_ready", False) and st.session_state.results is not 
                 
                 with st.spinner("Running grid search..."):
                     try:
-                        opt_results = run_grid_search(
-                            df=results["df"],
-                            param_grid=param_grid,
-                            base_params=base_params,
-                            metric=opt_metric,
-                            min_trades=min_trades,
-                            top_n=20,
-                            progress_callback=update_progress
-                        )
-                        
-                        progress_bar.empty()
-                        
-                        if opt_results.empty:
-                            st.warning("No valid configurations found. Try relaxing the minimum trades requirement.")
-                        else:
-                            st.success(f"✅ Optimization complete! Found {len(opt_results)} valid configurations.")
-                            
-                            # Show top results
-                            st.subheader("Top Configurations")
-                            
-                            # Format display columns
-                            display_cols = list(param_grid.keys()) + [
-                                "profit_factor", "win_rate", "total_return", 
-                                "max_drawdown", "sharpe_ratio", "num_trades"
-                            ]
-                            display_cols = [c for c in display_cols if c in opt_results.columns]
-                            
-                            st.dataframe(
-                                opt_results[display_cols].style.format({
-                                    "profit_factor": "{:.2f}",
-                                    "win_rate": "{:.1f}%",
-                                    "total_return": "{:.2f}%",
-                                    "max_drawdown": "{:.2f}%",
-                                    "sharpe_ratio": "{:.2f}",
-                                }),
-                                use_container_width=True
+                        if opt_validation_mode == "Walk-forward (train/test)":
+                            wf_cfg = WalkForwardConfig(
+                                train_days=int(wf_train_days),
+                                test_days=int(wf_test_days),
+                                step_days=None,
+                                max_folds=(None if int(wf_max_folds) == 0 else int(wf_max_folds)),
                             )
-                            
-                            # Analysis
-                            analysis = analyze_results(opt_results)
-                            
-                            st.subheader("Analysis")
-                            anal_col1, anal_col2 = st.columns(2)
-                            
-                            with anal_col1:
-                                st.markdown("**Best Configuration:**")
-                                for k, v in analysis.get("best_params", {}).items():
+
+                            def wf_progress(cur, tot):
+                                progress = cur / tot if tot > 0 else 0.0
+                                progress_bar.progress(progress, text=f"Walk-forward fold {cur}/{tot}")
+
+                            fold_results, wf_summary = run_walk_forward_grid_search(
+                                df=results["df"],
+                                param_grid=param_grid,
+                                base_params=base_params,
+                                metric=opt_metric,
+                                constraints=constraints,
+                                wf=wf_cfg,
+                                top_n_train=20,
+                                progress_callback=wf_progress
+                            )
+
+                            progress_bar.empty()
+
+                            if fold_results is None or fold_results.empty:
+                                st.warning(f"Walk-forward produced no results. {wf_summary.get('error', '')}")
+                            else:
+                                st.success(f"✅ Walk-forward complete! OK folds: {wf_summary.get('folds_ok', 0)}/{wf_summary.get('folds_total', 0)}")
+                                st.subheader("Fold Results (out-of-sample)")
+                                st.dataframe(fold_results, use_container_width=True)
+
+                                st.subheader("Out-of-sample Summary")
+                                st.write(f"- Avg OOS Return: `{wf_summary.get('oos_avg_return', 0):.2f}%`")
+                                st.write(f"- Median OOS Return: `{wf_summary.get('oos_median_return', 0):.2f}%`")
+                                st.write(f"- Avg OOS Win Rate: `{wf_summary.get('oos_avg_win_rate', 0):.1f}%`")
+                                st.write(f"- Avg OOS Profit Factor: `{wf_summary.get('oos_avg_profit_factor', 0):.2f}`")
+                                st.write(f"- Avg OOS Max DD: `{wf_summary.get('oos_avg_max_drawdown', 0):.2f}%`")
+
+                                st.subheader("Recommended (stable) parameters")
+                                for k, v in (wf_summary.get("recommended_params") or {}).items():
                                     st.write(f"- {k}: `{v}`")
-                            
-                            with anal_col2:
-                                st.markdown("**Performance:**")
-                                st.write(f"- Top Profit Factor: `{analysis.get('top_profit_factor', 0):.2f}`")
-                                st.write(f"- Avg PF (Top 10): `{analysis.get('avg_profit_factor_top_10', 0):.2f}`")
-                            
-                            # Download results
-                            st.download_button(
-                                "📥 Download Optimization Results",
-                                data=opt_results.to_csv(index=False).encode("utf-8"),
-                                file_name="optimization_results.csv",
-                                mime="text/csv"
+
+                                st.download_button(
+                                    "📥 Download Walk-forward Results",
+                                    data=fold_results.to_csv(index=False).encode("utf-8"),
+                                    file_name="walk_forward_results.csv",
+                                    mime="text/csv"
+                                )
+                        else:
+                            opt_results = run_grid_search(
+                                df=results["df"],
+                                param_grid=param_grid,
+                                base_params=base_params,
+                                metric=opt_metric,
+                                min_trades=min_trades,
+                                constraints=constraints,
+                                top_n=20,
+                                progress_callback=update_progress
                             )
+                            
+                            progress_bar.empty()
+                            
+                            if opt_results.empty:
+                                st.warning("No valid configurations found. Try relaxing constraints / minimum trades.")
+                            else:
+                                st.success(f"✅ Optimization complete! Found {len(opt_results)} valid configurations.")
+                                
+                                # Show top results
+                                st.subheader("Top Configurations")
+                                
+                                # Format display columns
+                                display_cols = list(param_grid.keys()) + [
+                                    "profit_factor", "win_rate", "total_return", 
+                                    "max_drawdown", "sharpe_ratio", "num_trades"
+                                ]
+                                display_cols = [c for c in display_cols if c in opt_results.columns]
+                                
+                                st.dataframe(
+                                    opt_results[display_cols].style.format({
+                                        "profit_factor": "{:.2f}",
+                                        "win_rate": "{:.1f}%",
+                                        "total_return": "{:.2f}%",
+                                        "max_drawdown": "{:.2f}%",
+                                        "sharpe_ratio": "{:.2f}",
+                                    }),
+                                    use_container_width=True
+                                )
+                                
+                                # Analysis
+                                analysis = analyze_results(opt_results)
+                                
+                                st.subheader("Analysis")
+                                anal_col1, anal_col2 = st.columns(2)
+                                
+                                with anal_col1:
+                                    st.markdown("**Best Configuration:**")
+                                    for k, v in analysis.get("best_params", {}).items():
+                                        st.write(f"- {k}: `{v}`")
+                                
+                                with anal_col2:
+                                    st.markdown("**Performance:**")
+                                    st.write(f"- Top Profit Factor: `{analysis.get('top_profit_factor', 0):.2f}`")
+                                    st.write(f"- Avg PF (Top 10): `{analysis.get('avg_profit_factor_top_10', 0):.2f}`")
+                                
+                                # Download results
+                                st.download_button(
+                                    "📥 Download Optimization Results",
+                                    data=opt_results.to_csv(index=False).encode("utf-8"),
+                                    file_name="optimization_results.csv",
+                                    mime="text/csv"
+                                )
                             
                     except Exception as e:
                         progress_bar.empty()

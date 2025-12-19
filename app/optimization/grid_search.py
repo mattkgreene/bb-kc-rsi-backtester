@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from itertools import product
-from typing import Dict, List, Any, Optional, Callable, Literal
+from typing import Dict, List, Any, Optional, Callable, Literal, Tuple
 import math
 import pandas as pd
 import numpy as np
@@ -96,6 +96,53 @@ class GridSearchConfig:
     metric: OptimizationMetric = "profit_factor"
     min_trades: int = 5
     top_n: int = 20
+
+
+# =============================================================================
+# Constraints / Filtering
+# =============================================================================
+
+@dataclass
+class ResultConstraints:
+    """
+    Hard constraints applied during optimization.
+
+    Any constraint set to None is ignored.
+    """
+    min_trades: int = 5
+    min_win_rate: Optional[float] = None            # percent, e.g. 50.0
+    min_profit_factor: Optional[float] = None       # e.g. 1.2
+    max_drawdown: Optional[float] = None            # percent, e.g. 20.0
+    min_total_return: Optional[float] = None        # percent, e.g. 0.0
+
+
+def _passes_constraints(stats: pd.Series, constraints: Optional[ResultConstraints]) -> bool:
+    if constraints is None:
+        return True
+
+    trades = float(stats.get("trades", 0) or 0)
+    if trades < constraints.min_trades:
+        return False
+
+    if constraints.min_win_rate is not None:
+        if float(stats.get("win_rate", 0) or 0) < constraints.min_win_rate:
+            return False
+
+    if constraints.min_profit_factor is not None:
+        pf = float(stats.get("profit_factor", 0) or 0)
+        # stats may return inf; treat as pass
+        if not math.isinf(pf) and pf < constraints.min_profit_factor:
+            return False
+
+    if constraints.max_drawdown is not None:
+        if float(stats.get("max_drawdown_pct", 0) or 0) > constraints.max_drawdown:
+            return False
+
+    if constraints.min_total_return is not None:
+        if float(stats.get("total_equity_return_pct", 0) or 0) < constraints.min_total_return:
+            return False
+
+    return True
 
 
 # =============================================================================
@@ -183,6 +230,7 @@ def run_grid_search(
     base_params: Dict[str, Any],
     metric: OptimizationMetric = "profit_factor",
     min_trades: int = 5,
+    constraints: Optional[ResultConstraints] = None,
     top_n: int = 20,
     progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> pd.DataFrame:
@@ -224,6 +272,12 @@ def run_grid_search(
     total = len(combinations)
     results: List[OptimizationResult] = []
     
+    # If constraints are provided, prefer their min_trades value.
+    if constraints is None:
+        constraints = ResultConstraints(min_trades=min_trades)
+    else:
+        constraints.min_trades = max(constraints.min_trades, min_trades)
+
     for i, combo in enumerate(combinations):
         # Merge with base params
         params = base_params.copy()
@@ -276,8 +330,8 @@ def run_grid_search(
             
             num_trades = int(stats.get("trades", 0))
             
-            # Skip if not enough trades
-            if num_trades < min_trades:
+            # Apply constraints (includes min_trades)
+            if not _passes_constraints(stats, constraints):
                 continue
             
             # Extract metrics
@@ -319,6 +373,214 @@ def run_grid_search(
     
     # Return top N
     return results_df.head(top_n).reset_index(drop=True)
+
+
+# =============================================================================
+# Walk-forward optimization
+# =============================================================================
+
+@dataclass
+class WalkForwardConfig:
+    """
+    Walk-forward configuration for time-series validation.
+
+    train_days / test_days are calendar-day lengths; we slice by timestamps.
+    """
+    train_days: int = 180
+    test_days: int = 30
+    step_days: Optional[int] = None  # default: test_days
+    max_folds: Optional[int] = None
+
+
+def _walk_forward_splits(
+    df: pd.DataFrame,
+    cfg: WalkForwardConfig,
+) -> List[Tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp, pd.Timestamp]]:
+    if df is None or df.empty or not isinstance(df.index, pd.DatetimeIndex):
+        return []
+
+    step_days = cfg.step_days if cfg.step_days is not None else cfg.test_days
+    train_td = pd.Timedelta(days=int(cfg.train_days))
+    test_td = pd.Timedelta(days=int(cfg.test_days))
+    step_td = pd.Timedelta(days=int(step_days))
+
+    t0 = pd.Timestamp(df.index.min())
+    tN = pd.Timestamp(df.index.max())
+
+    splits = []
+    train_start = t0
+    while True:
+        train_end = train_start + train_td
+        test_start = train_end
+        test_end = test_start + test_td
+        if test_end > tN:
+            break
+        splits.append((train_start, train_end, test_start, test_end))
+        if cfg.max_folds is not None and len(splits) >= cfg.max_folds:
+            break
+        train_start = train_start + step_td
+
+    return splits
+
+
+def run_walk_forward_grid_search(
+    df: pd.DataFrame,
+    param_grid: Dict[str, List[Any]],
+    base_params: Dict[str, Any],
+    *,
+    metric: OptimizationMetric = "profit_factor",
+    constraints: Optional[ResultConstraints] = None,
+    wf: Optional[WalkForwardConfig] = None,
+    top_n_train: int = 20,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """
+    Walk-forward optimization:
+    - For each fold, grid-search on TRAIN to pick best params by `metric`
+    - Evaluate that best config on the next TEST window (out-of-sample)
+
+    Returns:
+      (fold_results_df, summary_dict)
+    """
+    wf = wf or WalkForwardConfig()
+    splits = _walk_forward_splits(df, wf)
+    if not splits:
+        return pd.DataFrame(), {"error": "Not enough data for walk-forward splits."}
+
+    fold_rows: List[Dict[str, Any]] = []
+    best_params_per_fold: List[Dict[str, Any]] = []
+
+    total_folds = len(splits)
+    for fold_idx, (train_start, train_end, test_start, test_end) in enumerate(splits, start=1):
+        if progress_callback:
+            progress_callback(fold_idx - 1, total_folds)
+
+        train_df = df.loc[(df.index >= train_start) & (df.index < train_end)]
+        test_df = df.loc[(df.index >= test_start) & (df.index < test_end)]
+        if train_df.empty or test_df.empty:
+            continue
+
+        train_results = run_grid_search(
+            df=train_df,
+            param_grid=param_grid,
+            base_params=base_params,
+            metric=metric,
+            min_trades=constraints.min_trades if constraints else 5,
+            constraints=constraints,
+            top_n=top_n_train,
+            progress_callback=None,
+        )
+
+        if train_results is None or train_results.empty:
+            fold_rows.append({
+                "fold": fold_idx,
+                "train_start": train_start,
+                "train_end": train_end,
+                "test_start": test_start,
+                "test_end": test_end,
+                "status": "no_valid_train_results",
+            })
+            continue
+
+        best_row = train_results.iloc[0]
+        grid_param_cols = list(param_grid.keys())
+        best_params = {k: best_row[k] for k in grid_param_cols if k in best_row.index}
+        best_params_per_fold.append(best_params)
+
+        # Evaluate best params on TEST
+        test_params = base_params.copy()
+        test_params.update(best_params)
+        test_stats, _, _, _ = run_backtest(
+            test_df,
+            timeframe=test_params.get("timeframe", "30m"),
+            bb_len=test_params.get("bb_len", 20),
+            bb_std=test_params.get("bb_std", 2.0),
+            bb_basis_type=test_params.get("bb_basis_type", "sma"),
+            kc_ema_len=test_params.get("kc_ema_len", 20),
+            kc_atr_len=test_params.get("kc_atr_len", 14),
+            kc_mult=test_params.get("kc_mult", 2.0),
+            kc_mid_type=test_params.get("kc_mid_type", "ema"),
+            rsi_len_30m=test_params.get("rsi_len_30m", 14),
+            rsi_ma_len=test_params.get("rsi_ma_len", 10),
+            rsi_smoothing_type=test_params.get("rsi_smoothing_type", "ema"),
+            rsi_ma_type=test_params.get("rsi_ma_type", "sma"),
+            rsi_min=test_params.get("rsi_min", 70),
+            rsi_ma_min=test_params.get("rsi_ma_min", 70),
+            use_rsi_relation=test_params.get("use_rsi_relation", True),
+            rsi_relation=test_params.get("rsi_relation", ">="),
+            entry_band_mode=test_params.get("entry_band_mode", "Either"),
+            exit_channel=test_params.get("exit_channel", "BB"),
+            exit_level=test_params.get("exit_level", "mid"),
+            cash=test_params.get("cash", 10000),
+            commission=test_params.get("commission", 0.001),
+            trade_mode=test_params.get("trade_mode", "Margin / Futures"),
+            use_stop=test_params.get("use_stop", True),
+            stop_mode=test_params.get("stop_mode", "Fixed %"),
+            stop_pct=test_params.get("stop_pct", 2.0),
+            stop_atr_mult=test_params.get("stop_atr_mult", 2.0),
+            use_trailing=test_params.get("use_trailing", False),
+            trail_pct=test_params.get("trail_pct", 1.0),
+            max_bars_in_trade=test_params.get("max_bars_in_trade", 100),
+            daily_loss_limit=test_params.get("daily_loss_limit", 3.0),
+            risk_per_trade_pct=test_params.get("risk_per_trade_pct", 1.0),
+            max_leverage=test_params.get("max_leverage"),
+            maintenance_margin_pct=test_params.get("maintenance_margin_pct"),
+            max_margin_utilization=test_params.get("max_margin_utilization"),
+        )
+
+        fold_row = {
+            "fold": fold_idx,
+            "train_start": train_start,
+            "train_end": train_end,
+            "test_start": test_start,
+            "test_end": test_end,
+            "status": "ok",
+            **best_params,
+            "train_metric": float(best_row.get(metric, np.nan)),
+            "train_trades": int(best_row.get("num_trades", 0)),
+            "test_total_return": float(test_stats.get("total_equity_return_pct", 0)),
+            "test_profit_factor": float(test_stats.get("profit_factor", 0)),
+            "test_win_rate": float(test_stats.get("win_rate", 0)),
+            "test_max_drawdown": float(test_stats.get("max_drawdown_pct", 0)),
+            "test_trades": int(test_stats.get("trades", 0)),
+        }
+        fold_rows.append(fold_row)
+
+        if progress_callback:
+            progress_callback(fold_idx, total_folds)
+
+    out = pd.DataFrame(fold_rows)
+    ok = out[out.get("status") == "ok"] if not out.empty and "status" in out.columns else out
+
+    summary: Dict[str, Any] = {
+        "folds_total": total_folds,
+        "folds_ok": int(len(ok)) if ok is not None else 0,
+    }
+
+    if ok is not None and not ok.empty:
+        summary.update({
+            "oos_avg_return": float(ok["test_total_return"].mean()),
+            "oos_median_return": float(ok["test_total_return"].median()),
+            "oos_avg_profit_factor": float(ok["test_profit_factor"].replace([np.inf], np.nan).mean()),
+            "oos_avg_win_rate": float(ok["test_win_rate"].mean()),
+            "oos_avg_max_drawdown": float(ok["test_max_drawdown"].mean()),
+        })
+
+    # Recommend a stable parameter set (mode across folds).
+    recommended: Dict[str, Any] = {}
+    if best_params_per_fold:
+        keys = list(param_grid.keys())
+        for k in keys:
+            vals = [bp.get(k) for bp in best_params_per_fold if k in bp]
+            if not vals:
+                continue
+            try:
+                recommended[k] = pd.Series(vals).mode().iloc[0]
+            except Exception:
+                recommended[k] = vals[0]
+
+    summary["recommended_params"] = recommended
+    return out, summary
 
 
 def create_custom_grid(
