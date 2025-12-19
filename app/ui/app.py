@@ -632,7 +632,7 @@ if st.session_state.get("run_ready", False) and st.session_state.results is not 
         max_drawdown = stats.get("max_drawdown_pct", 0.0)
         sharpe = stats.get("sharpe_ratio", 0.0)
         sortino = stats.get("sortino_ratio", 0.0)
-        win_rate = stats.get("win_rate", 0.0) * 100
+        win_rate = stats.get("win_rate", 0.0)  # Already in percentage from engine
         profit_factor = stats.get("profit_factor", 0.0)
         
         c1, c2, c3, c4, c5, c6 = st.columns(6)
