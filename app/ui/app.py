@@ -318,6 +318,11 @@ def _cached_backtest(df, params: dict):
 with st.sidebar:
     st.header("Strategy Settings")
     
+    # Top run button
+    run_top = st.button("Run Backtest", type="primary", use_container_width=True, key="run_top")
+    
+    st.divider()
+
     # Preset Selector
     preset_options = ["Custom"] + list(STRATEGY_PRESETS.keys())
     preset_display_names = ["Custom (Manual Configuration)"] + [
@@ -493,12 +498,18 @@ with st.sidebar:
         # Margin / Futures–only settings
         if trade_mode == "Margin / Futures":
             st.caption("Margin Settings")
-            max_leverage = st.number_input("Max leverage", 1.0, 125.0, 5.0, 0.5)
-            maintenance_margin_pct = st.number_input("Maintenance margin %", 0.1, 50.0, 0.5, 0.1)
+            max_leverage = st.number_input("Max leverage", 1.0, 125.0, 
+                                          float(get_param_value("max_leverage", 5.0) or 5.0), 
+                                          0.5)
+            maintenance_margin_pct = st.number_input("Maintenance margin %", 0.1, 50.0, 
+                                                    float(get_param_value("maintenance_margin_pct", 0.5) or 0.5), 
+                                                    0.1)
 
             if use_stop:
                 enable_max_margin_util = st.checkbox("Limit margin utilization?", value=False)
-                max_margin_utilization = st.number_input("Max margin utilization %", 10.0, 100.0, 70.0, 5.0)
+                max_margin_utilization = st.number_input("Max margin utilization %", 10.0, 100.0, 
+                                                        float(get_param_value("max_margin_utilization", 70.0) or 70.0), 
+                                                        5.0)
             else:
                 max_margin_utilization = None
         else:
@@ -506,14 +517,8 @@ with st.sidebar:
             maintenance_margin_pct = None
             max_margin_utilization = None
     
-    # Chart Settings
-    with st.expander("Chart Settings"):
-        show_candles = st.checkbox("Candlesticks", value=True)
-        lock_rsi_y = st.checkbox("Lock RSI to 0–100", value=True)
-
-    
     st.divider()
-    run = st.button("Run Backtest", type="primary", use_container_width=True)
+    run_bottom = st.button("Run Backtest", type="primary", use_container_width=True, key="run_bottom")
 
 
 def _snapshot_params():
@@ -577,7 +582,7 @@ if st.session_state.last_params is not None and st.session_state.last_params != 
 
 
 # On click: compute, then flip run_ready
-if run:
+if run_top or run_bottom:
     with st.spinner("Fetching data and running backtest..."):
         df = _cached_fetch(
             params_now["exchange"], params_now["symbol"], params_now["timeframe"],
