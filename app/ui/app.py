@@ -645,6 +645,13 @@ if st.session_state.get("run_ready", False) and st.session_state.results is not 
 
         st.divider()
 
+        # Chart controls
+        chart_col1, chart_col2 = st.columns([1, 1])
+        with chart_col1:
+            show_candles = st.checkbox("Show Candlesticks", value=True)
+        with chart_col2:
+            lock_rsi_y = st.checkbox("Lock RSI Y-axis (0-100)", value=True)
+
         # Chart
         ds_full = ds
         ds_plot = ds_full.copy()
