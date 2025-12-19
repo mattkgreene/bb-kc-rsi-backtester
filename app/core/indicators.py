@@ -218,6 +218,296 @@ def atr(high: pd.Series, low: pd.Series, close: pd.Series, n: int = 14) -> pd.Se
     return tr.rolling(n).mean()
 
 
+# =============================================================================
+# Volume Indicators
+# =============================================================================
+
+def obv(close: pd.Series, volume: pd.Series) -> pd.Series:
+    """
+    Calculate On-Balance Volume (OBV).
+    
+    OBV is a cumulative indicator that adds volume on up days
+    and subtracts on down days. Divergences between OBV and price
+    can signal potential reversals.
+    
+    Args:
+        close: Closing price series.
+        volume: Volume series.
+    
+    Returns:
+        Series containing OBV values.
+    
+    Interpretation:
+        - Rising OBV with rising price: Confirms uptrend
+        - Rising OBV with falling price: Potential bullish reversal
+        - Falling OBV with rising price: Potential bearish reversal
+        - Falling OBV with falling price: Confirms downtrend
+    
+    For Mean Reversion:
+        Look for OBV divergence from price as confirmation signal.
+    """
+    direction = np.sign(close.diff())
+    return (direction * volume).fillna(0).cumsum()
+
+
+def obv_divergence(
+    close: pd.Series,
+    volume: pd.Series,
+    lookback: int = 14
+) -> pd.Series:
+    """
+    Detect OBV divergence from price.
+    
+    Returns a score indicating divergence:
+        Positive: Bullish divergence (price down, OBV up) - good for shorting exit
+        Negative: Bearish divergence (price up, OBV down) - good for shorting entry
+        Near 0: No significant divergence
+    
+    Args:
+        close: Closing price series
+        volume: Volume series
+        lookback: Lookback period for comparison
+    
+    Returns:
+        Series with divergence scores (-100 to 100)
+    """
+    obv_val = obv(close, volume)
+    
+    # Calculate rate of change for both
+    price_roc = (close - close.shift(lookback)) / close.shift(lookback) * 100
+    obv_roc = (obv_val - obv_val.shift(lookback)) / obv_val.shift(lookback).abs().replace(0, 1) * 100
+    
+    # Divergence: difference in direction/magnitude
+    divergence = obv_roc - price_roc
+    
+    # Normalize to -100 to 100 range
+    div_std = divergence.rolling(lookback * 2).std()
+    normalized = (divergence / div_std.replace(0, np.nan)).clip(-3, 3) * 33.33
+    
+    return normalized
+
+
+def volume_sma_ratio(volume: pd.Series, period: int = 20) -> pd.Series:
+    """
+    Calculate volume relative to its moving average.
+    
+    Ratio > 1.5: High volume (significant move, potential exhaustion)
+    Ratio < 0.5: Low volume (weak move, may not sustain)
+    Ratio ~1.0: Normal volume
+    
+    Returns:
+        Series of volume/SMA ratios
+    """
+    vol_sma = volume.rolling(period).mean()
+    return volume / vol_sma.replace(0, np.nan)
+
+
+def mfi(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    volume: pd.Series,
+    period: int = 14
+) -> pd.Series:
+    """
+    Calculate Money Flow Index (MFI) - Volume-weighted RSI.
+    
+    MFI incorporates volume into overbought/oversold analysis,
+    providing confirmation for RSI signals.
+    
+    Args:
+        high: High price series
+        low: Low price series
+        close: Close price series
+        volume: Volume series
+        period: Lookback period (default 14)
+    
+    Returns:
+        Series containing MFI values (0-100 scale)
+    
+    Interpretation:
+        - MFI > 80: Overbought (like RSI > 70)
+        - MFI < 20: Oversold (like RSI < 30)
+    
+    For Short Strategy:
+        MFI > 80 combined with RSI > 70 = stronger signal
+    """
+    # Typical price
+    tp = (high + low + close) / 3
+    
+    # Raw money flow
+    raw_mf = tp * volume
+    
+    # Positive and negative money flow
+    pos_mf = np.where(tp > tp.shift(1), raw_mf, 0)
+    neg_mf = np.where(tp < tp.shift(1), raw_mf, 0)
+    
+    pos_mf = pd.Series(pos_mf, index=close.index)
+    neg_mf = pd.Series(neg_mf, index=close.index)
+    
+    # Sum over period
+    pos_sum = pos_mf.rolling(period).sum()
+    neg_sum = neg_mf.rolling(period).sum()
+    
+    # Money flow ratio and index
+    mfr = pos_sum / neg_sum.replace(0, np.nan)
+    mfi_val = 100 - (100 / (1 + mfr))
+    
+    return mfi_val
+
+
+# =============================================================================
+# Momentum Confirmation Indicators
+# =============================================================================
+
+def stochastic(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    k_period: int = 14,
+    d_period: int = 3
+) -> Tuple[pd.Series, pd.Series]:
+    """
+    Calculate Stochastic Oscillator.
+    
+    Measures where the close is relative to the high-low range.
+    
+    Args:
+        high: High price series
+        low: Low price series
+        close: Close price series
+        k_period: Lookback for %K
+        d_period: Smoothing for %D
+    
+    Returns:
+        Tuple of (%K, %D) Series
+    
+    Interpretation:
+        - %K > 80: Overbought
+        - %K < 20: Oversold
+        - %K crossing %D: Momentum shift
+    """
+    lowest_low = low.rolling(k_period).min()
+    highest_high = high.rolling(k_period).max()
+    
+    k = 100 * (close - lowest_low) / (highest_high - lowest_low).replace(0, np.nan)
+    d = k.rolling(d_period).mean()
+    
+    return k, d
+
+
+def williams_r(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    period: int = 14
+) -> pd.Series:
+    """
+    Calculate Williams %R.
+    
+    Similar to Stochastic but inverted. Measures overbought/oversold.
+    
+    Args:
+        high: High price series
+        low: Low price series
+        close: Close price series
+        period: Lookback period
+    
+    Returns:
+        Series with Williams %R values (-100 to 0)
+    
+    Interpretation:
+        - %R > -20: Overbought (good for short entry)
+        - %R < -80: Oversold (good for short exit)
+    """
+    highest_high = high.rolling(period).max()
+    lowest_low = low.rolling(period).min()
+    
+    wr = -100 * (highest_high - close) / (highest_high - lowest_low).replace(0, np.nan)
+    
+    return wr
+
+
+def cci(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    period: int = 20
+) -> pd.Series:
+    """
+    Calculate Commodity Channel Index (CCI).
+    
+    CCI measures deviation from statistical mean, useful for
+    identifying cyclical trends and extremes.
+    
+    Args:
+        high: High price series
+        low: Low price series
+        close: Close price series
+        period: Lookback period
+    
+    Returns:
+        Series with CCI values (unbounded, typically -200 to +200)
+    
+    Interpretation:
+        - CCI > 100: Overbought
+        - CCI < -100: Oversold
+        - Extreme CCI (>200 or <-200): Strong overbought/oversold
+    """
+    tp = (high + low + close) / 3
+    sma_tp = sma(tp, period)
+    mean_dev = tp.rolling(period).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
+    
+    return (tp - sma_tp) / (0.015 * mean_dev.replace(0, np.nan))
+
+
+def momentum_composite(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    rsi_val: pd.Series,
+    rsi_weight: float = 0.4,
+    stoch_weight: float = 0.3,
+    cci_weight: float = 0.3,
+    stoch_period: int = 14,
+    cci_period: int = 20
+) -> pd.Series:
+    """
+    Create composite momentum score from multiple indicators.
+    
+    Combines RSI, Stochastic, and CCI into a single score.
+    Useful for confirming overbought/oversold conditions.
+    
+    Args:
+        high: High price series
+        low: Low price series
+        close: Close price series
+        rsi_val: Pre-calculated RSI values
+        rsi_weight: Weight for RSI (default 0.4)
+        stoch_weight: Weight for Stochastic (default 0.3)
+        cci_weight: Weight for CCI (default 0.3)
+    
+    Returns:
+        Series with composite score (0-100 scale)
+        Higher values = more overbought
+    """
+    # Get individual indicators
+    stoch_k, _ = stochastic(high, low, close, stoch_period)
+    cci_val = cci(high, low, close, cci_period)
+    
+    # Normalize CCI to 0-100 scale
+    cci_normalized = ((cci_val + 200) / 400 * 100).clip(0, 100)
+    
+    # Calculate weighted composite
+    composite = (
+        rsi_weight * rsi_val +
+        stoch_weight * stoch_k +
+        cci_weight * cci_normalized
+    )
+    
+    return composite
+
+
 def keltner(
     high: pd.Series,
     low: pd.Series,
@@ -340,4 +630,148 @@ def add_bb_kc_rsi(
 
     # Forward-fill RSI values back to original timeframe
     df[['rsi30', 'rsi30_ma']] = df30[['rsi', 'rsi_ma']].reindex(df.index, method='ffill')
+    return df
+
+
+def add_confirmation_indicators(
+    df: pd.DataFrame,
+    include_volume: bool = True,
+    include_momentum: bool = True,
+    include_divergence: bool = True,
+    obv_div_lookback: int = 14,
+    mfi_period: int = 14,
+    stoch_period: int = 14,
+    cci_period: int = 20,
+    williams_period: int = 14
+) -> pd.DataFrame:
+    """
+    Add confirmation indicators for more robust signal generation.
+    
+    These additional indicators help confirm overbought/oversold conditions
+    and reduce false signals that hurt long-term performance.
+    
+    Args:
+        df: OHLCV DataFrame with columns ['Open', 'High', 'Low', 'Close', 'Volume']
+        include_volume: Add volume-based indicators (OBV, MFI)
+        include_momentum: Add momentum indicators (Stochastic, Williams %R, CCI)
+        include_divergence: Add divergence detection
+        Various period parameters for customization
+    
+    Returns:
+        DataFrame with added indicator columns:
+            - obv: On-Balance Volume
+            - obv_divergence: OBV price divergence score
+            - vol_ratio: Volume/SMA ratio
+            - mfi: Money Flow Index
+            - stoch_k, stoch_d: Stochastic oscillator
+            - williams_r: Williams %R
+            - cci: Commodity Channel Index
+            - momentum_score: Composite momentum score
+    """
+    # Check for volume column
+    has_volume = 'Volume' in df.columns and df['Volume'].sum() > 0
+    
+    if include_volume and has_volume:
+        # On-Balance Volume
+        df['obv'] = obv(df['Close'], df['Volume'])
+        
+        # Volume ratio
+        df['vol_ratio'] = volume_sma_ratio(df['Volume'])
+        
+        # Money Flow Index
+        df['mfi'] = mfi(df['High'], df['Low'], df['Close'], df['Volume'], mfi_period)
+        
+        if include_divergence:
+            # OBV Divergence
+            df['obv_divergence'] = obv_divergence(df['Close'], df['Volume'], obv_div_lookback)
+    
+    if include_momentum:
+        # Stochastic
+        df['stoch_k'], df['stoch_d'] = stochastic(
+            df['High'], df['Low'], df['Close'], stoch_period
+        )
+        
+        # Williams %R
+        df['williams_r'] = williams_r(df['High'], df['Low'], df['Close'], williams_period)
+        
+        # CCI
+        df['cci'] = cci(df['High'], df['Low'], df['Close'], cci_period)
+        
+        # Composite momentum score (if RSI available)
+        if 'rsi30' in df.columns:
+            df['momentum_score'] = momentum_composite(
+                df['High'], df['Low'], df['Close'],
+                df['rsi30'],
+                stoch_period=stoch_period,
+                cci_period=cci_period
+            )
+    
+    return df
+
+
+def add_all_indicators(
+    df: pd.DataFrame,
+    # BB/KC/RSI params
+    bb_len: int = 20,
+    bb_std: float = 2.0,
+    bb_basis_type: str = "sma",
+    kc_ema_len: int = 20,
+    kc_atr_len: int = 14,
+    kc_mult: float = 2.0,
+    kc_mid_type: str = "ema",
+    rsi_len_30m: int = 14,
+    rsi_ma_len: int = 10,
+    rsi_smoothing_type: str = "ema",
+    rsi_ma_type: str = "sma",
+    # Additional indicator params
+    include_confirmation: bool = True,
+    include_volume: bool = True,
+    include_momentum: bool = True,
+    include_regime: bool = True,
+    adx_period: int = 14,
+    vol_lookback: int = 100
+) -> pd.DataFrame:
+    """
+    Add all indicators to a DataFrame in one call.
+    
+    This is a comprehensive function that adds:
+    - Core BB/KC/RSI indicators
+    - Volume confirmation indicators
+    - Momentum confirmation indicators
+    - Regime detection indicators
+    
+    Args:
+        df: OHLCV DataFrame
+        Various parameters for each indicator type
+        include_confirmation: Add volume/momentum indicators
+        include_regime: Add regime detection indicators
+    
+    Returns:
+        DataFrame with all indicators added
+    """
+    # Add core indicators
+    df = add_bb_kc_rsi(
+        df,
+        bb_len=bb_len, bb_std=bb_std, bb_basis_type=bb_basis_type,
+        kc_ema_len=kc_ema_len, kc_atr_len=kc_atr_len, kc_mult=kc_mult, kc_mid_type=kc_mid_type,
+        rsi_len_30m=rsi_len_30m, rsi_ma_len=rsi_ma_len,
+        rsi_smoothing_type=rsi_smoothing_type, rsi_ma_type=rsi_ma_type
+    )
+    
+    # Add confirmation indicators
+    if include_confirmation:
+        df = add_confirmation_indicators(
+            df,
+            include_volume=include_volume,
+            include_momentum=include_momentum
+        )
+    
+    # Add regime indicators
+    if include_regime:
+        try:
+            from core.regime import add_regime_indicators
+            df = add_regime_indicators(df, adx_period=adx_period, vol_lookback=vol_lookback)
+        except ImportError:
+            pass  # Regime module not available
+    
     return df

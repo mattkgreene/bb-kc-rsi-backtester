@@ -81,22 +81,52 @@ class WinCriteria:
         min_trades: Minimum trades for statistical significance (default: 10)
         min_profit_factor: Minimum profit factor (default: 1.0)
         min_win_rate: Minimum win rate % (default: 0)
+        min_calmar: Minimum Calmar ratio (return/drawdown)
+        max_profit_factor: Maximum profit factor (to filter overfitting)
+        max_win_rate: Maximum win rate (to filter suspiciously high)
     """
     min_total_return: float = 0.0
     max_drawdown: float = 20.0
     min_trades: int = 10
     min_profit_factor: float = 1.0
     min_win_rate: float = 0.0
+    min_calmar: float = 0.0  # Return / Drawdown ratio
+    max_profit_factor: float = 10.0  # Filter likely overfit
+    max_win_rate: float = 90.0  # Filter suspicious results
     
     def is_winner(self, run: BacktestRun) -> bool:
         """Check if a backtest run meets winning criteria."""
+        # Calculate Calmar ratio
+        calmar = run.total_return / run.max_drawdown if run.max_drawdown > 0 else float('inf')
+        
         return (
             run.total_return >= self.min_total_return
             and run.max_drawdown <= self.max_drawdown
             and run.num_trades >= self.min_trades
             and run.profit_factor >= self.min_profit_factor
+            and run.profit_factor <= self.max_profit_factor
             and run.win_rate >= self.min_win_rate
+            and run.win_rate <= self.max_win_rate
+            and calmar >= self.min_calmar
         )
+
+
+@dataclass
+class RobustWinCriteria(WinCriteria):
+    """
+    Enhanced win criteria focused on long-term robustness.
+    
+    These stricter criteria help filter out overfit strategies that
+    look good in backtests but fail in live trading.
+    """
+    min_total_return: float = 5.0  # Must show meaningful profit
+    max_drawdown: float = 25.0
+    min_trades: int = 30  # Need more trades for significance
+    min_profit_factor: float = 1.2  # Must have real edge
+    min_win_rate: float = 35.0  # Not unrealistically low
+    min_calmar: float = 0.5  # Decent risk-adjusted return
+    max_profit_factor: float = 5.0  # Lower max to filter overfit
+    max_win_rate: float = 80.0  # Lower max to filter suspicious
 
 
 @dataclass 

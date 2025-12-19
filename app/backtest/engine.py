@@ -24,8 +24,22 @@ import pandas as pd
 import numpy as np
 from numpy.typing import NDArray
 
-from core.indicators import add_bb_kc_rsi
+from core.indicators import add_bb_kc_rsi, add_confirmation_indicators
 from core.utils import cmp, vectorized_cmp
+
+# Try to import regime module (optional enhancement)
+try:
+    from core.regime import add_regime_indicators, create_regime_filter
+    HAS_REGIME = True
+except ImportError:
+    HAS_REGIME = False
+
+# Try to import MTF module (optional enhancement)
+try:
+    from core.mtf import create_mtf_filter, add_mtf_indicators
+    HAS_MTF = True
+except ImportError:
+    HAS_MTF = False
 
 
 # =============================================================================
@@ -146,6 +160,13 @@ def build_dataset(
     rsi_ma_len: int = 10,
     rsi_smoothing_type: str = "ema",
     rsi_ma_type: str = "sma",
+    # New robustness parameters
+    include_regime: bool = False,
+    include_confirmation: bool = False,
+    include_mtf: bool = False,
+    adx_period: int = 14,
+    vol_lookback: int = 100,
+    timeframe: str = "30m",
 ) -> pd.DataFrame:
     """
     Build a complete dataset with all indicators for backtesting.
@@ -166,6 +187,12 @@ def build_dataset(
         rsi_ma_len: RSI moving average period.
         rsi_smoothing_type: RSI smoothing method.
         rsi_ma_type: RSI MA smoothing method.
+        include_regime: Add regime detection indicators (ADX, trend).
+        include_confirmation: Add volume/momentum confirmation indicators.
+        include_mtf: Add multi-timeframe indicators.
+        adx_period: Period for ADX calculation.
+        vol_lookback: Lookback for volatility regime detection.
+        timeframe: Base timeframe for MTF analysis.
     
     Returns:
         DataFrame with OHLCV + indicator columns, UTC-indexed.
@@ -178,6 +205,19 @@ def build_dataset(
         rsi_len_30m=rsi_len_30m, rsi_ma_len=rsi_ma_len,
         rsi_smoothing_type=rsi_smoothing_type, rsi_ma_type=rsi_ma_type,
     )
+    
+    # Add confirmation indicators for more robust signals
+    if include_confirmation:
+        ds = add_confirmation_indicators(ds)
+    
+    # Add regime detection indicators
+    if include_regime and HAS_REGIME:
+        ds = add_regime_indicators(ds, adx_period=adx_period, vol_lookback=vol_lookback)
+    
+    # Add multi-timeframe indicators
+    if include_mtf and HAS_MTF:
+        ds = add_mtf_indicators(ds, base_tf=timeframe)
+    
     return _ensure_utc_index(ds)
 
 
@@ -217,6 +257,17 @@ def run_strategy_loop(
     max_leverage: Optional[float] = None,
     maintenance_margin_pct: Optional[float] = None,
     max_margin_utilization: Optional[float] = None,
+    
+    # NEW: Regime and confirmation filters for long-term robustness
+    use_regime_filter: bool = False,
+    min_mr_score: float = 50.0,
+    max_adx: Optional[float] = None,
+    block_strong_uptrend: bool = True,
+    use_confirmation: bool = False,
+    min_momentum_score: float = 60.0,
+    use_mfi_confirm: bool = False,
+    mfi_overbought: float = 80.0,
+    use_mtf_filter: bool = False,
 ) -> Tuple[pd.DataFrame, EquityCurve]:
     """
     Execute the short-only trading strategy on prepared dataset.
@@ -259,6 +310,17 @@ def run_strategy_loop(
             max_leverage: Maximum leverage allowed.
             maintenance_margin_pct: Liquidation threshold %.
             max_margin_utilization: Max margin usage %.
+        
+        Regime Filters (for long-term robustness):
+            use_regime_filter: Enable regime-based trade filtering.
+            min_mr_score: Minimum mean-reversion suitability score (0-100).
+            max_adx: Maximum ADX value (blocks strong trends).
+            block_strong_uptrend: Block shorts during strong uptrends.
+            use_confirmation: Require momentum confirmation.
+            min_momentum_score: Minimum momentum score for entry.
+            use_mfi_confirm: Require MFI confirmation.
+            mfi_overbought: MFI threshold for overbought.
+            use_mtf_filter: Use multi-timeframe alignment filter.
     
     Returns:
         Tuple of (trades_df, equity_curve):
@@ -343,6 +405,44 @@ def run_strategy_loop(
     
     # Combined entry signal: all conditions must be true
     entry_signal_vec = band_ok_vec & rsi_ok_vec & rma_ok_vec & rsi_relation_ok_vec & (close > 0)
+    
+    # =========================================================================
+    # Apply Regime and Confirmation Filters (for long-term robustness)
+    # =========================================================================
+    
+    # Regime filter: avoid trades in unfavorable market conditions
+    if use_regime_filter and 'mr_score' in ds.columns:
+        # Mean reversion score filter
+        mr_ok_vec = ds['mr_score'].values >= min_mr_score
+        entry_signal_vec = entry_signal_vec & mr_ok_vec
+        
+        # ADX filter (avoid strong trends)
+        if max_adx is not None and 'adx' in ds.columns:
+            adx_vals = ds['adx'].values
+            adx_ok_vec = (adx_vals <= max_adx) | np.isnan(adx_vals)
+            entry_signal_vec = entry_signal_vec & adx_ok_vec
+        
+        # Block strong uptrends (bad for short-only strategy)
+        if block_strong_uptrend and 'adx' in ds.columns and 'trend_dir' in ds.columns:
+            adx_vals = ds['adx'].values
+            trend_vals = ds['trend_dir'].values
+            not_strong_uptrend = ~((adx_vals > 25) & (trend_vals > 0))
+            entry_signal_vec = entry_signal_vec & not_strong_uptrend
+    
+    # Momentum confirmation filter
+    if use_confirmation and 'momentum_score' in ds.columns:
+        momentum_ok_vec = ds['momentum_score'].values >= min_momentum_score
+        entry_signal_vec = entry_signal_vec & momentum_ok_vec
+    
+    # MFI (Money Flow Index) confirmation
+    if use_mfi_confirm and 'mfi' in ds.columns:
+        mfi_ok_vec = ds['mfi'].values >= mfi_overbought
+        entry_signal_vec = entry_signal_vec & mfi_ok_vec
+    
+    # Multi-timeframe filter
+    if use_mtf_filter and 'mtf_filter' in ds.columns:
+        mtf_ok_vec = ds['mtf_filter'].values.astype(bool)
+        entry_signal_vec = entry_signal_vec & mtf_ok_vec
 
     # --- Helper Functions ---
     
@@ -1000,6 +1100,18 @@ def run_backtest(
     max_leverage: Optional[float] = None,
     maintenance_margin_pct: Optional[float] = None,
     max_margin_utilization: Optional[float] = None,
+    # NEW: Robustness enhancement parameters
+    use_regime_filter: bool = False,
+    min_mr_score: float = 50.0,
+    max_adx: Optional[float] = None,
+    block_strong_uptrend: bool = True,
+    use_confirmation: bool = False,
+    min_momentum_score: float = 60.0,
+    use_mfi_confirm: bool = False,
+    mfi_overbought: float = 80.0,
+    use_mtf_filter: bool = False,
+    adx_period: int = 14,
+    vol_lookback: int = 100,
 ) -> Tuple[pd.Series, pd.DataFrame, pd.DataFrame, EquityCurve]:
     """
     Run a complete backtest with the BB+KC+RSI short strategy.
@@ -1037,6 +1149,11 @@ def run_backtest(
     """
     df = _ensure_utc_index(df)
 
+    # Determine if we need enhanced indicators
+    need_regime = use_regime_filter
+    need_confirmation = use_confirmation or use_mfi_confirm
+    need_mtf = use_mtf_filter
+
     # Build dataset with indicators
     ds = build_dataset(
         df,
@@ -1044,6 +1161,12 @@ def run_backtest(
         kc_ema_len=kc_ema_len, kc_atr_len=kc_atr_len, kc_mult=kc_mult, kc_mid_type=kc_mid_type,
         rsi_len_30m=rsi_len_30m, rsi_ma_len=rsi_ma_len,
         rsi_smoothing_type=rsi_smoothing_type, rsi_ma_type=rsi_ma_type,
+        include_regime=need_regime,
+        include_confirmation=need_confirmation,
+        include_mtf=need_mtf,
+        adx_period=adx_period,
+        vol_lookback=vol_lookback,
+        timeframe=timeframe,
     )
 
     # Execute strategy
@@ -1068,6 +1191,16 @@ def run_backtest(
         max_leverage=max_leverage,
         maintenance_margin_pct=maintenance_margin_pct,
         max_margin_utilization=max_margin_utilization,
+        # New robustness filters
+        use_regime_filter=use_regime_filter,
+        min_mr_score=min_mr_score,
+        max_adx=max_adx,
+        block_strong_uptrend=block_strong_uptrend,
+        use_confirmation=use_confirmation,
+        min_momentum_score=min_momentum_score,
+        use_mfi_confirm=use_mfi_confirm,
+        mfi_overbought=mfi_overbought,
+        use_mtf_filter=use_mtf_filter,
     )
 
     # Finalize trades with timestamps

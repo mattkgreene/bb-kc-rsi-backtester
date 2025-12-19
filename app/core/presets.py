@@ -22,7 +22,7 @@ class StrategyPreset(TypedDict, total=False):
     # Metadata
     name: str
     description: str
-    category: Literal["conservative", "aggressive", "balanced", "specialized"]
+    category: Literal["conservative", "aggressive", "balanced", "specialized", "robust"]
     
     # Bollinger Bands
     bb_len: int
@@ -68,6 +68,19 @@ class StrategyPreset(TypedDict, total=False):
     max_leverage: Optional[float]
     maintenance_margin_pct: Optional[float]
     max_margin_utilization: Optional[float]
+    
+    # NEW: Robustness Enhancement Parameters
+    use_regime_filter: bool
+    min_mr_score: float
+    max_adx: Optional[float]
+    block_strong_uptrend: bool
+    use_confirmation: bool
+    min_momentum_score: float
+    use_mfi_confirm: bool
+    mfi_overbought: float
+    use_mtf_filter: bool
+    adx_period: int
+    vol_lookback: int
 
 
 # =============================================================================
@@ -488,6 +501,237 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "max_leverage": None,
         "maintenance_margin_pct": None,
         "max_margin_utilization": None,
+    },
+    
+    # -------------------------------------------------------------------------
+    # ROBUST STRATEGIES - Designed for long-term profitability
+    # -------------------------------------------------------------------------
+    # These strategies use regime detection and confirmation filters to avoid
+    # trades in unfavorable market conditions, reducing overfitting risk.
+    
+    "robust_regime_aware": {
+        "name": "Robust Regime-Aware",
+        "description": "Uses market regime detection to avoid trading during strong trends. Only trades when conditions favor mean reversion. Designed for long-term consistency.",
+        "category": "robust",
+        
+        # Standard indicators
+        "bb_len": 20,
+        "bb_std": 2.0,
+        "bb_basis_type": "sma",
+        "kc_ema_len": 20,
+        "kc_atr_len": 14,
+        "kc_mult": 2.0,
+        "kc_mid_type": "ema",
+        "rsi_len_30m": 14,
+        "rsi_ma_len": 10,
+        "rsi_smoothing_type": "ema",
+        "rsi_ma_type": "sma",
+        
+        # Entry - Standard thresholds
+        "rsi_min": 72,
+        "rsi_ma_min": 70,
+        "use_rsi_relation": True,
+        "rsi_relation": ">=",
+        "entry_band_mode": "Either",
+        
+        # Exit
+        "exit_channel": "BB",
+        "exit_level": "mid",
+        
+        # Risk - Conservative
+        "use_stop": True,
+        "stop_mode": "ATR",
+        "stop_pct": 2.0,
+        "stop_atr_mult": 2.0,
+        "use_trailing": True,
+        "trail_pct": 1.5,
+        "max_bars_in_trade": 80,
+        "daily_loss_limit": 3.0,
+        "risk_per_trade_pct": 1.0,
+        
+        "trade_mode": "Simple (1x spot-style)",
+        "max_leverage": None,
+        "maintenance_margin_pct": None,
+        "max_margin_utilization": None,
+        
+        # REGIME FILTERS - Key to long-term robustness
+        "use_regime_filter": True,
+        "min_mr_score": 50,  # Only trade when conditions favor mean reversion
+        "max_adx": 30,  # Avoid strong trends
+        "block_strong_uptrend": True,  # Never short in strong uptrends
+        "use_confirmation": False,
+        "min_momentum_score": 60,
+        "use_mfi_confirm": False,
+        "mfi_overbought": 80,
+        "use_mtf_filter": False,
+        "adx_period": 14,
+        "vol_lookback": 100,
+    },
+    
+    "robust_multi_confirm": {
+        "name": "Robust Multi-Confirmation",
+        "description": "Requires multiple indicator confirmation before entry. Uses momentum composite score and MFI to filter out weak setups. Fewer trades but higher quality.",
+        "category": "robust",
+        
+        "bb_len": 20,
+        "bb_std": 2.0,
+        "bb_basis_type": "sma",
+        "kc_ema_len": 20,
+        "kc_atr_len": 14,
+        "kc_mult": 2.0,
+        "kc_mid_type": "ema",
+        "rsi_len_30m": 14,
+        "rsi_ma_len": 10,
+        "rsi_smoothing_type": "ema",
+        "rsi_ma_type": "sma",
+        
+        # Entry - Higher thresholds for quality
+        "rsi_min": 74,
+        "rsi_ma_min": 72,
+        "use_rsi_relation": True,
+        "rsi_relation": ">=",
+        "entry_band_mode": "Both",  # Require both bands
+        
+        "exit_channel": "BB",
+        "exit_level": "mid",
+        
+        "use_stop": True,
+        "stop_mode": "ATR",
+        "stop_pct": 2.0,
+        "stop_atr_mult": 1.8,
+        "use_trailing": True,
+        "trail_pct": 1.2,
+        "max_bars_in_trade": 60,
+        "daily_loss_limit": 2.5,
+        "risk_per_trade_pct": 0.8,
+        
+        "trade_mode": "Simple (1x spot-style)",
+        "max_leverage": None,
+        "maintenance_margin_pct": None,
+        "max_margin_utilization": None,
+        
+        # CONFIRMATION FILTERS
+        "use_regime_filter": True,
+        "min_mr_score": 60,
+        "max_adx": 25,  # Stricter trend filter
+        "block_strong_uptrend": True,
+        "use_confirmation": True,  # Require momentum confirmation
+        "min_momentum_score": 70,  # High momentum score required
+        "use_mfi_confirm": True,   # Require MFI confirmation
+        "mfi_overbought": 75,
+        "use_mtf_filter": False,
+        "adx_period": 14,
+        "vol_lookback": 100,
+    },
+    
+    "robust_mtf_aligned": {
+        "name": "Robust MTF-Aligned",
+        "description": "Uses multi-timeframe analysis to confirm overbought conditions across 1H and 4H timeframes. Only trades when all timeframes align. Best for catching major reversals.",
+        "category": "robust",
+        
+        "bb_len": 20,
+        "bb_std": 2.0,
+        "bb_basis_type": "sma",
+        "kc_ema_len": 20,
+        "kc_atr_len": 14,
+        "kc_mult": 2.0,
+        "kc_mid_type": "ema",
+        "rsi_len_30m": 14,
+        "rsi_ma_len": 10,
+        "rsi_smoothing_type": "ema",
+        "rsi_ma_type": "sma",
+        
+        "rsi_min": 72,
+        "rsi_ma_min": 70,
+        "use_rsi_relation": True,
+        "rsi_relation": ">=",
+        "entry_band_mode": "Either",
+        
+        "exit_channel": "BB",
+        "exit_level": "lower",  # Target bigger moves
+        
+        "use_stop": True,
+        "stop_mode": "ATR",
+        "stop_pct": 2.5,
+        "stop_atr_mult": 2.5,  # Wider stop for bigger moves
+        "use_trailing": True,
+        "trail_pct": 2.0,
+        "max_bars_in_trade": 120,  # Allow longer holds
+        "daily_loss_limit": 3.0,
+        "risk_per_trade_pct": 1.0,
+        
+        "trade_mode": "Simple (1x spot-style)",
+        "max_leverage": None,
+        "maintenance_margin_pct": None,
+        "max_margin_utilization": None,
+        
+        # MTF FILTERS
+        "use_regime_filter": True,
+        "min_mr_score": 50,
+        "max_adx": 30,
+        "block_strong_uptrend": True,
+        "use_confirmation": False,
+        "min_momentum_score": 60,
+        "use_mfi_confirm": False,
+        "mfi_overbought": 80,
+        "use_mtf_filter": True,  # Key: require MTF alignment
+        "adx_period": 14,
+        "vol_lookback": 100,
+    },
+    
+    "robust_all_filters": {
+        "name": "Robust Maximum Filters",
+        "description": "Uses ALL available filters: regime detection, momentum confirmation, MFI, and MTF alignment. Very selective - few trades but highest probability setups. Best for patient traders.",
+        "category": "robust",
+        
+        "bb_len": 20,
+        "bb_std": 2.0,
+        "bb_basis_type": "sma",
+        "kc_ema_len": 20,
+        "kc_atr_len": 14,
+        "kc_mult": 2.0,
+        "kc_mid_type": "ema",
+        "rsi_len_30m": 14,
+        "rsi_ma_len": 10,
+        "rsi_smoothing_type": "ema",
+        "rsi_ma_type": "sma",
+        
+        "rsi_min": 72,
+        "rsi_ma_min": 70,
+        "use_rsi_relation": True,
+        "rsi_relation": ">=",
+        "entry_band_mode": "Either",
+        
+        "exit_channel": "BB",
+        "exit_level": "mid",
+        
+        "use_stop": True,
+        "stop_mode": "ATR",
+        "stop_pct": 2.0,
+        "stop_atr_mult": 2.0,
+        "use_trailing": True,
+        "trail_pct": 1.5,
+        "max_bars_in_trade": 80,
+        "daily_loss_limit": 2.5,
+        "risk_per_trade_pct": 1.2,  # Can risk more with high-prob setups
+        
+        "trade_mode": "Simple (1x spot-style)",
+        "max_leverage": None,
+        "maintenance_margin_pct": None,
+        "max_margin_utilization": None,
+        
+        # ALL FILTERS ENABLED
+        "use_regime_filter": True,
+        "min_mr_score": 60,
+        "max_adx": 25,
+        "block_strong_uptrend": True,
+        "use_confirmation": True,
+        "min_momentum_score": 65,
+        "use_mfi_confirm": True,
+        "mfi_overbought": 75,
+        "use_mtf_filter": True,
+        "adx_period": 14,
+        "vol_lookback": 100,
     },
 }
 
