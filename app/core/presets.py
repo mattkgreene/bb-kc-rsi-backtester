@@ -121,10 +121,14 @@ DEFAULT_PRESET: StrategyPreset = {
     "risk_per_trade_pct": 1.0,
     
     # Trade mode
-    "trade_mode": "Simple (1x spot-style)",
-    "max_leverage": None,
-    "maintenance_margin_pct": None,
-    "max_margin_utilization": None,
+    # Keep Margin/Futures enabled by default, but do it safely:
+    # - require a stop
+    # - cap leverage
+    # - cap margin utilization
+    "trade_mode": "Margin / Futures",
+    "max_leverage": 5.0,
+    "maintenance_margin_pct": 0.5,
+    "max_margin_utilization": 70.0,
 }
 
 
