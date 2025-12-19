@@ -246,6 +246,105 @@ if "discovery_results" not in st.session_state:
 if "selected_winning_strategy" not in st.session_state:
     st.session_state.selected_winning_strategy = None
 
+# Widget key defaults - initialize from DEFAULT_PRESET
+# These are used to properly sync widget state with session state
+WIDGET_DEFAULTS = {
+    # Capital
+    "w_cash": 10_000,
+    "w_commission": 0.001,
+    # Indicators - BB
+    "w_bb_len": DEFAULT_PRESET.get("bb_len", 20),
+    "w_bb_std": DEFAULT_PRESET.get("bb_std", 2.0),
+    "w_bb_basis_type": DEFAULT_PRESET.get("bb_basis_type", "sma"),
+    # Indicators - KC
+    "w_kc_ema_len": DEFAULT_PRESET.get("kc_ema_len", 20),
+    "w_kc_atr_len": DEFAULT_PRESET.get("kc_atr_len", 14),
+    "w_kc_mult": DEFAULT_PRESET.get("kc_mult", 2.0),
+    "w_kc_mid_is_ema": DEFAULT_PRESET.get("kc_mid_type", "ema") == "ema",
+    # Indicators - RSI
+    "w_rsi_len_30m": DEFAULT_PRESET.get("rsi_len_30m", 14),
+    "w_rsi_smoothing_type": DEFAULT_PRESET.get("rsi_smoothing_type", "ema"),
+    "w_rsi_ma_len": DEFAULT_PRESET.get("rsi_ma_len", 10),
+    "w_rsi_ma_type": DEFAULT_PRESET.get("rsi_ma_type", "sma"),
+    # Entry/Exit
+    "w_rsi_min": DEFAULT_PRESET.get("rsi_min", 70),
+    "w_rsi_ma_min": DEFAULT_PRESET.get("rsi_ma_min", 70),
+    "w_use_rsi_relation": DEFAULT_PRESET.get("use_rsi_relation", True),
+    "w_rsi_relation": DEFAULT_PRESET.get("rsi_relation", ">="),
+    "w_entry_band_mode": DEFAULT_PRESET.get("entry_band_mode", "Either"),
+    "w_exit_channel": DEFAULT_PRESET.get("exit_channel", "BB"),
+    "w_exit_level": DEFAULT_PRESET.get("exit_level", "mid"),
+    # Risk Management
+    "w_trade_mode": DEFAULT_PRESET.get("trade_mode", "Simple (1x spot-style)"),
+    "w_use_stop": DEFAULT_PRESET.get("use_stop", False),
+    "w_stop_mode": DEFAULT_PRESET.get("stop_mode", "Fixed %"),
+    "w_stop_pct": float(DEFAULT_PRESET.get("stop_pct", 2.0) or 2.0),
+    "w_stop_atr_mult": float(DEFAULT_PRESET.get("stop_atr_mult", 2.0) or 2.0),
+    "w_use_trailing": DEFAULT_PRESET.get("use_trailing", False),
+    "w_trail_pct": float(DEFAULT_PRESET.get("trail_pct", 1.0)),
+    "w_max_bars_in_trade": int(DEFAULT_PRESET.get("max_bars_in_trade", 100)),
+    "w_daily_loss_limit": float(DEFAULT_PRESET.get("daily_loss_limit", 3.0)),
+    "w_risk_per_trade_pct": float(DEFAULT_PRESET.get("risk_per_trade_pct", 1.0)),
+    # Margin
+    "w_max_leverage": float(DEFAULT_PRESET.get("max_leverage", 5.0) or 5.0),
+    "w_maintenance_margin_pct": float(DEFAULT_PRESET.get("maintenance_margin_pct", 0.5) or 0.5),
+    "w_max_margin_utilization": float(DEFAULT_PRESET.get("max_margin_utilization", 70.0) or 70.0),
+}
+
+# Initialize widget keys in session state if not present
+for key, default_val in WIDGET_DEFAULTS.items():
+    if key not in st.session_state:
+        st.session_state[key] = default_val
+
+
+def sync_widgets_to_preset(preset_params: dict):
+    """Sync widget session state keys to match preset values."""
+    key_mapping = {
+        "bb_len": "w_bb_len",
+        "bb_std": "w_bb_std",
+        "bb_basis_type": "w_bb_basis_type",
+        "kc_ema_len": "w_kc_ema_len",
+        "kc_atr_len": "w_kc_atr_len",
+        "kc_mult": "w_kc_mult",
+        "kc_mid_type": ("w_kc_mid_is_ema", lambda v: v == "ema"),
+        "rsi_len_30m": "w_rsi_len_30m",
+        "rsi_smoothing_type": "w_rsi_smoothing_type",
+        "rsi_ma_len": "w_rsi_ma_len",
+        "rsi_ma_type": "w_rsi_ma_type",
+        "rsi_min": "w_rsi_min",
+        "rsi_ma_min": "w_rsi_ma_min",
+        "use_rsi_relation": "w_use_rsi_relation",
+        "rsi_relation": "w_rsi_relation",
+        "entry_band_mode": "w_entry_band_mode",
+        "exit_channel": "w_exit_channel",
+        "exit_level": "w_exit_level",
+        "trade_mode": "w_trade_mode",
+        "use_stop": "w_use_stop",
+        "stop_mode": "w_stop_mode",
+        "stop_pct": "w_stop_pct",
+        "stop_atr_mult": "w_stop_atr_mult",
+        "use_trailing": "w_use_trailing",
+        "trail_pct": "w_trail_pct",
+        "max_bars_in_trade": "w_max_bars_in_trade",
+        "daily_loss_limit": "w_daily_loss_limit",
+        "risk_per_trade_pct": "w_risk_per_trade_pct",
+        "max_leverage": "w_max_leverage",
+        "maintenance_margin_pct": "w_maintenance_margin_pct",
+        "max_margin_utilization": "w_max_margin_utilization",
+    }
+    
+    for param_key, widget_key in key_mapping.items():
+        if param_key in preset_params:
+            value = preset_params[param_key]
+            if isinstance(widget_key, tuple):
+                # Special transform (e.g., kc_mid_type -> boolean)
+                actual_key, transform = widget_key
+                st.session_state[actual_key] = transform(value)
+            else:
+                # Handle None values with defaults
+                if value is not None:
+                    st.session_state[widget_key] = value
+
 # Initialize discovery database
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "data", "discovery.db")
 discovery_db = DiscoveryDatabase(DB_PATH)
@@ -351,6 +450,8 @@ with st.sidebar:
         st.session_state.selected_preset = selected_preset
         if selected_preset != "Custom":
             st.session_state.preset_params = STRATEGY_PRESETS[selected_preset].copy()
+            # Sync widget session state keys to match preset values
+            sync_widgets_to_preset(st.session_state.preset_params)
         st.session_state.dirty_params = True
     
     if selected_preset != "Custom":
@@ -380,146 +481,159 @@ with st.sidebar:
     # Indicator Settings
     with st.expander("Indicators (BB, KC, RSI)"):
         st.caption("Bollinger Bands")
-        bb_len = st.number_input("BB length", 5, 200, get_param_value("bb_len", 20), 1)
-        bb_std = st.number_input("BB std dev", 1.0, 4.0, get_param_value("bb_std", 2.0), 0.1)
+        bb_len = st.number_input("BB length", 5, 200, key="w_bb_len")
+        bb_std = st.number_input("BB std dev", 1.0, 4.0, key="w_bb_std", step=0.1)
         bb_basis_options = ["sma", "ema"]
         bb_basis_type = st.selectbox(
             "BB basis type", bb_basis_options, 
-            index=bb_basis_options.index(get_param_value("bb_basis_type", "sma"))
+            index=bb_basis_options.index(st.session_state.w_bb_basis_type),
+            key="w_bb_basis_type"
         )
         
         st.caption("Keltner Channel")
-        kc_ema_len = st.number_input("KC EMA/SMA length (mid)", 5, 200, get_param_value("kc_ema_len", 20), 1)
-        kc_atr_len = st.number_input("KC ATR length", 5, 200, get_param_value("kc_atr_len", 14), 1)
-        kc_mult = st.number_input("KC ATR multiplier", 0.5, 5.0, get_param_value("kc_mult", 2.0), 0.1)
-        kc_mid_is_ema = st.checkbox("KC mid uses EMA (uncheck = SMA)", value=get_param_value("kc_mid_type", "ema") == "ema")
+        kc_ema_len = st.number_input("KC EMA/SMA length (mid)", 5, 200, key="w_kc_ema_len")
+        kc_atr_len = st.number_input("KC ATR length", 5, 200, key="w_kc_atr_len")
+        kc_mult = st.number_input("KC ATR multiplier", 0.5, 5.0, key="w_kc_mult", step=0.1)
+        kc_mid_is_ema = st.checkbox("KC mid uses EMA (uncheck = SMA)", key="w_kc_mid_is_ema")
         kc_mid_type = "ema" if kc_mid_is_ema else "sma"
 
         st.caption("RSI (30m resample)")
-        rsi_len_30m = st.number_input("RSI length", 5, 100, get_param_value("rsi_len_30m", 14), 1)
+        rsi_len_30m = st.number_input("RSI length", 5, 100, key="w_rsi_len_30m")
         rsi_smoothing_options = ["ema", "sma", "rma"]
         rsi_smoothing_type = st.selectbox(
             "RSI smoothing type", rsi_smoothing_options,
-            index=rsi_smoothing_options.index(get_param_value("rsi_smoothing_type", "ema"))
+            index=rsi_smoothing_options.index(st.session_state.w_rsi_smoothing_type),
+            key="w_rsi_smoothing_type"
         )
-        rsi_ma_len = st.number_input("RSI MA length", 2, 100, get_param_value("rsi_ma_len", 10), 1)
+        rsi_ma_len = st.number_input("RSI MA length", 2, 100, key="w_rsi_ma_len")
         rsi_ma_options = ["sma", "ema"]
         rsi_ma_type = st.selectbox(
             "RSI MA smoothing type", rsi_ma_options,
-            index=rsi_ma_options.index(get_param_value("rsi_ma_type", "sma"))
+            index=rsi_ma_options.index(st.session_state.w_rsi_ma_type),
+            key="w_rsi_ma_type"
         )
 
     # Strategy Logic
     with st.expander("Entry & Exit Logic"):
         st.subheader("Entry")
-        rsi_min = st.number_input("RSI minimum (entry)", 0, 100, get_param_value("rsi_min", 70), 1)
-        rsi_ma_min = st.number_input("RSI MA minimum (entry)", 0, 100, get_param_value("rsi_ma_min", 70), 1)
+        rsi_min = st.number_input("RSI minimum (entry)", 0, 100, key="w_rsi_min")
+        rsi_ma_min = st.number_input("RSI MA minimum (entry)", 0, 100, key="w_rsi_ma_min")
         use_rsi_relation = st.checkbox(
             "Use RSI ↔ RSI MA relation?",
-            value=get_param_value("use_rsi_relation", True),
+            key="w_use_rsi_relation",
         )
         rsi_relation_options = ["<", "<=", ">", ">="]
         rsi_relation = st.selectbox(
             "RSI vs RSI MA relation", rsi_relation_options,
-            index=rsi_relation_options.index(get_param_value("rsi_relation", ">="))
+            index=rsi_relation_options.index(st.session_state.w_rsi_relation),
+            key="w_rsi_relation"
         )
 
         entry_band_options = ["Either", "KC", "BB", "Both"]
         entry_band_mode = st.selectbox(
             "Price must touch which top band?",
             entry_band_options,
-            index=entry_band_options.index(get_param_value("entry_band_mode", "Either")),
+            index=entry_band_options.index(st.session_state.w_entry_band_mode),
+            key="w_entry_band_mode",
         )
 
         st.subheader("Exit")
         exit_channel_options = ["BB", "KC"]
         exit_channel = st.selectbox(
             "Exit channel", exit_channel_options,
-            index=exit_channel_options.index(get_param_value("exit_channel", "BB"))
+            index=exit_channel_options.index(st.session_state.w_exit_channel),
+            key="w_exit_channel"
         )
         exit_level_options = ["mid", "lower"]
         exit_level = st.selectbox(
             "Exit level", exit_level_options,
-            index=exit_level_options.index(get_param_value("exit_level", "mid")),
+            index=exit_level_options.index(st.session_state.w_exit_level),
+            key="w_exit_level",
         )
 
     # Risk Management
     with st.expander("Risk Management & Capital"):
-        cash = st.number_input("Starting cash", 100, 1_000_000_000, 10_000, 100)
-        commission = st.number_input("Commission (fraction)", 0.0, 0.01, 0.001, 0.0001)
+        cash = st.number_input("Starting cash", 100, 1_000_000_000, 10_000, 100, key="w_cash")
+        commission = st.number_input("Commission (fraction)", 0.0, 0.01, 0.001, 0.0001, key="w_commission")
 
         trade_mode_options = ["Simple (1x spot-style)", "Margin / Futures"]
-        preset_trade_mode = get_param_value("trade_mode", "Simple (1x spot-style)")
         trade_mode = st.selectbox(
             "Trade mode",
             trade_mode_options,
-            index=trade_mode_options.index(preset_trade_mode) if preset_trade_mode in trade_mode_options else 0,
+            index=trade_mode_options.index(st.session_state.w_trade_mode) if st.session_state.w_trade_mode in trade_mode_options else 0,
+            key="w_trade_mode",
         )
 
-        use_stop = st.checkbox("Enable stop loss", value=get_param_value("use_stop", False))
+        use_stop = st.checkbox("Enable stop loss", key="w_use_stop")
         stop_mode_options = ["Fixed %", "ATR"]
-        preset_stop_mode = get_param_value("stop_mode", "Fixed %")
         stop_mode = st.selectbox(
             "Stop type",
             stop_mode_options,
-            index=stop_mode_options.index(preset_stop_mode) if preset_stop_mode in stop_mode_options else 0,
+            index=stop_mode_options.index(st.session_state.w_stop_mode) if st.session_state.w_stop_mode in stop_mode_options else 0,
+            key="w_stop_mode",
         )
 
         if stop_mode == "Fixed %":
             stop_pct = st.number_input(
                 "Fixed stop % (per trade)",
                 min_value=0.1, max_value=50.0,
-                value=float(get_param_value("stop_pct", 2.0) or 2.0), step=0.1
+                step=0.1,
+                key="w_stop_pct"
             )
             stop_atr_mult = None
         else:
             stop_atr_mult = st.number_input(
                 "ATR stop multiplier",
                 min_value=0.1, max_value=10.0,
-                value=float(get_param_value("stop_atr_mult", 2.0) or 2.0), step=0.1
+                step=0.1,
+                key="w_stop_atr_mult"
             )
             stop_pct = None
 
-        use_trailing = st.checkbox("Enable trailing stop", value=get_param_value("use_trailing", False))
+        use_trailing = st.checkbox("Enable trailing stop", key="w_use_trailing")
         trail_pct = st.number_input(
             "Trailing stop %",
             min_value=0.1, max_value=50.0,
-            value=float(get_param_value("trail_pct", 1.0)), step=0.1
+            step=0.1,
+            key="w_trail_pct"
         )
 
         max_bars_in_trade = st.number_input(
             "Max bars in trade",
             min_value=1, max_value=500,
-            value=int(get_param_value("max_bars_in_trade", 100)), step=1
+            step=1,
+            key="w_max_bars_in_trade"
         )
 
         daily_loss_limit = st.number_input(
             "Daily loss limit %",
             min_value=0.0, max_value=50.0,
-            value=float(get_param_value("daily_loss_limit", 3.0)), step=0.5
+            step=0.5,
+            key="w_daily_loss_limit"
         )
 
         risk_per_trade_pct = st.number_input(
             "Risk per trade % of equity",
             min_value=0.1, max_value=100.0,
-            value=float(get_param_value("risk_per_trade_pct", 1.0)), step=0.5
+            step=0.5,
+            key="w_risk_per_trade_pct"
         )
 
         # Margin / Futures–only settings
         if trade_mode == "Margin / Futures":
             st.caption("Margin Settings")
             max_leverage = st.number_input("Max leverage", 1.0, 125.0, 
-                                          float(get_param_value("max_leverage", 5.0) or 5.0), 
-                                          0.5)
+                                          step=0.5,
+                                          key="w_max_leverage")
             maintenance_margin_pct = st.number_input("Maintenance margin %", 0.1, 50.0, 
-                                                    float(get_param_value("maintenance_margin_pct", 0.5) or 0.5), 
-                                                    0.1)
+                                                    step=0.1,
+                                                    key="w_maintenance_margin_pct")
 
             if use_stop:
-                enable_max_margin_util = st.checkbox("Limit margin utilization?", value=False)
+                enable_max_margin_util = st.checkbox("Limit margin utilization?", value=False, key="w_enable_max_margin_util")
                 max_margin_utilization = st.number_input("Max margin utilization %", 10.0, 100.0, 
-                                                        float(get_param_value("max_margin_utilization", 70.0) or 70.0), 
-                                                        5.0)
+                                                        step=5.0,
+                                                        key="w_max_margin_utilization")
             else:
                 max_margin_utilization = None
         else:
@@ -610,8 +724,12 @@ if run_top or run_bottom:
 
 
 
-# main render path
-if st.session_state.get("run_ready", False) and st.session_state.results is not None and not st.session_state.dirty_params:
+# main render path - show results even when params are dirty (with warning)
+if st.session_state.get("run_ready", False) and st.session_state.results is not None:
+    # Show warning banner if params have changed since last run
+    if st.session_state.dirty_params:
+        st.warning("⚠️ **Parameters have changed.** Results shown below are from the previous run. Click **Run Backtest** to update.")
+    
     results = st.session_state.results
     df = results["df"]
     stats = results["stats"]
@@ -1307,6 +1425,8 @@ if st.session_state.get("run_ready", False) and st.session_state.results is not 
                                     st.session_state.selected_preset = "Custom"
                                     st.session_state.dirty_params = True
                                     st.session_state.selected_winning_strategy = selected_strategy
+                                    # Sync widget session state keys to match loaded strategy
+                                    sync_widgets_to_preset(selected_strategy.params)
                                     st.success("Strategy loaded! Click 'Run Backtest' to test it.")
                                     st.rerun()
                     
