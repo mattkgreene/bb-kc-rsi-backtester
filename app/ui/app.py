@@ -250,6 +250,12 @@ if "selected_winning_strategy" not in st.session_state:
 # Widget key defaults - initialize from DEFAULT_PRESET
 # These are used to properly sync widget state with session state
 WIDGET_DEFAULTS = {
+    # Data & Timeframe
+    "w_exchange": "bitstamp",
+    "w_symbol": "BTC/USD",
+    "w_timeframe": "30m",
+    "w_start_date": dt.date(2022, 1, 1),
+    "w_end_date": dt.datetime.utcnow().date(),
     # Capital
     "w_cash": 10_000,
     "w_commission": 0.001,
@@ -463,21 +469,36 @@ with st.sidebar:
     
     # Data Settings
     with st.expander("Data & Timeframe", expanded=True):
-        exchange = st.selectbox("Exchange", ["coinbase", "kraken", "gemini", "bitstamp", "binanceus"], index=3)
-        symbol = st.text_input("Symbol", "BTC/USD")
-        timeframe = st.selectbox("Timeframe", ["30m", "1h", "4h", "1d"], index=0)
+        exchange_options = ["coinbase", "kraken", "gemini", "bitstamp", "binanceus"]
+        exchange = st.selectbox(
+            "Exchange", 
+            exchange_options, 
+            index=exchange_options.index(st.session_state.w_exchange) if st.session_state.w_exchange in exchange_options else 3,
+            key="w_exchange"
+        )
+        symbol = st.text_input("Symbol", key="w_symbol")
+        timeframe_options = ["30m", "1h", "4h", "1d"]
+        timeframe = st.selectbox(
+            "Timeframe", 
+            timeframe_options, 
+            index=timeframe_options.index(st.session_state.w_timeframe) if st.session_state.w_timeframe in timeframe_options else 0,
+            key="w_timeframe"
+        )
 
         today = dt.datetime.utcnow().date()
-        default_start = dt.date(2022, 1, 1)
+        # Use session state values as defaults to persist across reruns
         date_range = st.date_input(
             "Date range (UTC)",
-            value=(default_start, today),
+            value=(st.session_state.w_start_date, st.session_state.w_end_date),
         )
         if isinstance(date_range, tuple) and len(date_range) == 2:
             start_date, end_date = date_range
+            # Persist selected dates in session state
+            st.session_state.w_start_date = start_date
+            st.session_state.w_end_date = end_date
         else:
-            start_date = default_start
-            end_date = today
+            start_date = st.session_state.w_start_date
+            end_date = st.session_state.w_end_date
 
     # Indicator Settings
     with st.expander("Indicators (BB, KC, RSI)"):
@@ -767,9 +788,9 @@ if st.session_state.get("run_ready", False) and st.session_state.results is not 
         # Chart controls
         chart_col1, chart_col2 = st.columns([1, 1])
         with chart_col1:
-            show_candles = st.checkbox("Show Candlesticks", value=True)
+            show_candles = st.checkbox("Show Candlesticks", value=True, key="show_candles")
         with chart_col2:
-            lock_rsi_y = st.checkbox("Lock RSI Y-axis (0-100)", value=True)
+            lock_rsi_y = st.checkbox("Lock RSI Y-axis (0-100)", value=True, key="lock_rsi_y")
 
         # Chart
         ds_full = ds
@@ -1021,7 +1042,7 @@ if st.session_state.get("run_ready", False) and st.session_state.results is not 
     with tab_analysis:
         st.header("Analysis & Discovery")
         
-        mode = st.radio("Select Tool", ["Parameter Optimization", "Strategy Discovery", "Leaderboard", "Pattern Recognition"], horizontal=True)
+        mode = st.radio("Select Tool", ["Parameter Optimization", "Strategy Discovery", "Leaderboard", "Pattern Recognition"], horizontal=True, key="analysis_mode")
         
         if mode == "Parameter Optimization":
             st.markdown("""
@@ -1039,6 +1060,7 @@ if st.session_state.get("run_ready", False) and st.session_state.results is not 
                     "RSI Minimum Range",
                     min_value=60, max_value=85,
                     value=(65, 75),
+                    key="opt_rsi_range",
                     help="Range of RSI minimum values to test"
                 )
                 
@@ -1048,6 +1070,7 @@ if st.session_state.get("run_ready", False) and st.session_state.results is not 
                     min_value=0.5, max_value=5.0,
                     value=(1.5, 3.0),
                     step=0.5,
+                    key="opt_stop_range",
                     help="Range of stop loss percentages to test"
                 )
                 
@@ -1057,6 +1080,7 @@ if st.session_state.get("run_ready", False) and st.session_state.results is not 
                     min_value=1.5, max_value=3.0,
                     value=(1.8, 2.2),
                     step=0.1,
+                    key="opt_band_range",
                     help="Range for BB std dev and KC ATR multiplier"
                 )
             
@@ -1066,7 +1090,8 @@ if st.session_state.get("run_ready", False) and st.session_state.results is not 
                 opt_validation_mode = st.radio(
                     "Validation mode",
                     ["In-sample (single window)", "Walk-forward (train/test)"],
-                    horizontal=True
+                    horizontal=True,
+                    key="opt_validation_mode"
                 )
                 
                 # Optimization metric
@@ -1074,6 +1099,7 @@ if st.session_state.get("run_ready", False) and st.session_state.results is not 
                     "Optimize for",
                     ["profit_factor", "sharpe_ratio", "sortino_ratio", "win_rate", "total_equity_return_pct"],
                     index=0,
+                    key="opt_metric",
                     help="Select the metric to maximize"
                 )
                 
@@ -1082,44 +1108,50 @@ if st.session_state.get("run_ready", False) and st.session_state.results is not 
                     "Grid Steps",
                     min_value=2, max_value=5,
                     value=3,
+                    key="opt_grid_steps",
                     help="Number of values to test within each range (more = slower but more thorough)"
                 )
                 
                 # Include entry modes
-                include_entry_modes = st.checkbox("Test all entry band modes", value=True)
-                include_exit_levels = st.checkbox("Test both exit levels (mid/lower)", value=False)
+                include_entry_modes = st.checkbox("Test all entry band modes", value=True, key="opt_include_entry_modes")
+                include_exit_levels = st.checkbox("Test both exit levels (mid/lower)", value=False, key="opt_include_exit_levels")
                 
                 # Minimum trades filter
                 min_trades = st.number_input(
                     "Minimum trades required",
                     min_value=1, max_value=50,
                     value=5,
+                    key="opt_min_trades",
                     help="Skip configurations with fewer trades"
                 )
 
                 st.subheader("Hard Constraints (optional)")
                 min_pf = st.number_input(
                     "Min Profit Factor (0 = off)",
-                    min_value=0.0, max_value=10.0, value=0.0, step=0.1
+                    min_value=0.0, max_value=10.0, value=0.0, step=0.1,
+                    key="opt_min_pf"
                 )
                 min_wr = st.number_input(
                     "Min Win Rate % (0 = off)",
-                    min_value=0.0, max_value=100.0, value=0.0, step=1.0
+                    min_value=0.0, max_value=100.0, value=0.0, step=1.0,
+                    key="opt_min_wr"
                 )
                 max_dd = st.number_input(
                     "Max Drawdown % (0 = off)",
-                    min_value=0.0, max_value=100.0, value=0.0, step=1.0
+                    min_value=0.0, max_value=100.0, value=0.0, step=1.0,
+                    key="opt_max_dd"
                 )
                 min_total_ret = st.number_input(
                     "Min Total Return % (0 = off)",
-                    min_value=-100.0, max_value=1000.0, value=0.0, step=1.0
+                    min_value=-100.0, max_value=1000.0, value=0.0, step=1.0,
+                    key="opt_min_total_ret"
                 )
 
                 if opt_validation_mode == "Walk-forward (train/test)":
                     st.subheader("Walk-forward settings")
-                    wf_train_days = st.number_input("Train window (days)", min_value=30, max_value=3650, value=180, step=30)
-                    wf_test_days = st.number_input("Test window (days)", min_value=7, max_value=365, value=30, step=7)
-                    wf_max_folds = st.number_input("Max folds (0 = all)", min_value=0, max_value=200, value=8, step=1)
+                    wf_train_days = st.number_input("Train window (days)", min_value=30, max_value=3650, value=180, step=30, key="wf_train_days")
+                    wf_test_days = st.number_input("Test window (days)", min_value=7, max_value=365, value=30, step=7, key="wf_test_days")
+                    wf_max_folds = st.number_input("Max folds (0 = all)", min_value=0, max_value=200, value=8, step=1, key="wf_max_folds")
             
             # Calculate expected combinations
             param_grid = create_custom_grid(
