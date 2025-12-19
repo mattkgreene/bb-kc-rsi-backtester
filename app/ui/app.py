@@ -1,5 +1,5 @@
 import streamlit as st
-from core.data import fetch_ohlcv, fetch_ohlcv_range
+from core.data import fetch_ohlcv, fetch_ohlcv_range, fetch_ohlcv_range_cached
 from core.utils import cmp, calculate_drawdown
 from core.presets import STRATEGY_PRESETS, get_preset_names, DEFAULT_PRESET
 from optimization.grid_search import (
@@ -278,7 +278,13 @@ def get_param_value(key: str, default):
 
 @st.cache_data(show_spinner=False)
 def _cached_fetch(exchange, symbol, timeframe, start_ts, end_ts):
-    df = fetch_ohlcv_range(exchange, symbol, timeframe, start_ts, end_ts)
+    # Disk-backed cache dramatically speeds up subsequent cold starts by
+    # incrementally filling missing history instead of re-downloading it all.
+    df = fetch_ohlcv_range_cached(
+        exchange, symbol, timeframe,
+        start_ts=start_ts, end_ts=end_ts,
+        repair_gaps=False
+    )
     return df
 
 @st.cache_data(show_spinner=False)
