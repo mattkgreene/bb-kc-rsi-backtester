@@ -10,5 +10,7 @@ RUN pip install --no-cache-dir -r /req/base.txt -r /req/streamlit.txt
 COPY app /workspace/app
 ENV PYTHONPATH=/workspace/app
 
-EXPOSE 8501
-CMD ["streamlit", "run", "app/ui/app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+# Use PORT env var for Railway compatibility (defaults to 8501 for local Docker)
+ENV PORT=8501
+EXPOSE $PORT
+CMD streamlit run app/ui/app.py --server.address=0.0.0.0 --server.port=$PORT
