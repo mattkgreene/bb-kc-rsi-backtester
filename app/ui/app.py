@@ -87,8 +87,12 @@ def build_entry_diagnostics(trades_table: pd.DataFrame, ds: pd.DataFrame) -> pd.
         return pd.DataFrame()
 
     has_exit_reason = "ExitReason" in trades_table.columns
-    # Determine margin mode from columns if possible, otherwise rely on globals (less ideal but works here)
-    margin_mode = "MarginUtilAtEntry" in trades_table.columns
+    # Determine margin mode by checking if MarginUtilAtEntry column exists AND has valid data
+    margin_mode = False
+    if "MarginUtilAtEntry" in trades_table.columns:
+        # Check if the column contains any non-NaN values
+        if trades_table["MarginUtilAtEntry"].notna().any():
+            margin_mode = True
 
     rows = []
     for _, r in trades_table.iterrows():
