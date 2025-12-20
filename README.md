@@ -23,6 +23,13 @@ This backtester implements a **short-selling mean-reversion strategy** based on 
 
 ```
 bb-kc-rsi-backtester/
+├── backend/               # FastAPI + background workers (queued jobs)
+│   ├── api/               # API routes + request/response models
+│   ├── db/                # SQLite-backed job queue + snapshots
+│   ├── tasks/             # Job handlers (optimize/discover/patterns/etc)
+│   ├── worker/            # Worker process (polls + executes jobs)
+│   ├── Dockerfile         # Backend API service image
+│   └── Dockerfile.worker  # Backend worker image
 ├── app/
 │   ├── backtest/
 │   │   └── engine.py      # Core backtesting logic, strategy loop, stats
@@ -35,6 +42,8 @@ bb-kc-rsi-backtester/
 │   │   └── grid_search.py # Parameter optimization via grid search
 │   └── ui/
 │       └── app.py         # Streamlit dashboard
+├── frontend/
+│   └── Dockerfile         # Dash UI image
 ├── docs/
 │   ├── STRATEGIES.md      # Strategy preset documentation
 │   └── OPTIMIZATION.md    # Optimization guide
@@ -147,13 +156,30 @@ User Input → Streamlit UI → Data Fetcher (CCXT) → Exchange API
 
 4. **Run the Dash application**
    ```bash
+   python frontend/ui/dash_app.py
+   ```
+
+   Legacy entrypoint (shim):
+   ```bash
    python app/ui/dash_app.py
    ```
 
-   The Dash app warms a 3-year BTC/USD cache on startup and stores OHLCV data in
-   `data/market_data.db`. Each backtest updates missing ranges before running.
+   Optimization/Discovery/Leaderboard/Patterns are now executed via the backend job API.
+   Run the backend services (step 5) and set `BACKEND_URL` (default: `http://localhost:8000`).
 
-5. **Run the Streamlit application (rollback path)**
+   Optional: enable frontend market cache warmup by setting `WARM_MARKET_CACHE=1`.
+
+5. **Run the backend API + worker (for queued jobs)**
+   ```bash
+   pip install -r requirements/base.txt -r requirements/backend.txt
+   uvicorn backend.api.main:app --host 0.0.0.0 --port 8000
+   ```
+   In another terminal:
+   ```bash
+   python -m backend.worker.main
+   ```
+
+6. **Run the Streamlit application (rollback path)**
    ```bash
    cd app
    streamlit run ui/app.py
@@ -275,18 +301,24 @@ Each trade includes:
 
 ### Railway
 
-The application includes a `railway.toml` configuration for easy deployment:
+This repo supports a monorepo-style split deployment:
 
-1. Connect your GitHub repository to Railway
-2. Railway will automatically detect the Dockerfile
-3. The app will be deployed with health checks enabled
+1. **Frontend service (Dash UI)**: use `frontend/Dockerfile` (default via `railway.toml`).
+2. **Backend API service**: use `backend/Dockerfile` (example config: `backend/railway.toml`).
+3. **Backend worker service**: use `backend/Dockerfile.worker` (example config: `backend/railway.worker.toml`).
 
 ### Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| PORT | Server port | 8501 |
-| PYTHONPATH | Python module path | /workspace/app |
+| PORT | Service port | 8050 (frontend) / 8000 (backend) |
+| PYTHONPATH | Python module path | `/workspace:/workspace/app` |
+| BACKEND_URL | Backend API base URL | `http://localhost:8000` |
+| WARM_MARKET_CACHE | Warm market cache at frontend startup | `false` |
+| BACKEND_DB_PATH | Backend jobs DB (SQLite) | `data/backend.db` |
+| DISCOVERY_DB_PATH | Discovery results DB (SQLite) | `data/discovery.db` |
+| MARKET_DB_PATH | Market data cache DB (SQLite) | `data/market_data.db` |
+| USE_SPARK | Enable optional Spark integration | `false` |
 
 ## Dependencies
 

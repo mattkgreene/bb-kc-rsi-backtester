@@ -1,0 +1,11 @@
+Commands executed:
+
+1) python3 test_backend_jobs_db.py
+
+2) python3 test_backend_leaderboard_db.py
+
+3) python3 test_frontend_api_client.py
+
+4) python3 test_backend_api_smoke.py
+
+5) python3 -m unittest discover -s . -p 'test_*.py'
