@@ -140,7 +140,20 @@ User Input → Streamlit UI → Data Fetcher (CCXT) → Exchange API
    pip install -r requirements/base.txt -r requirements/streamlit.txt
    ```
 
-4. **Run the application**
+   For Dash:
+   ```bash
+   pip install -r requirements/base.txt -r requirements/dash.txt
+   ```
+
+4. **Run the Dash application**
+   ```bash
+   python app/ui/dash_app.py
+   ```
+
+   The Dash app warms a 3-year BTC/USD cache on startup and stores OHLCV data in
+   `data/market_data.db`. Each backtest updates missing ranges before running.
+
+5. **Run the Streamlit application (rollback path)**
    ```bash
    cd app
    streamlit run ui/app.py
@@ -149,10 +162,17 @@ User Input → Streamlit UI → Data Fetcher (CCXT) → Exchange API
 ### Docker
 
 ```bash
-docker compose up --build
+docker compose up --build ui
 ```
 
-The application will be available at `http://localhost:8501`
+The Dash app will be available at `http://localhost:8050`
+
+To run the Streamlit UI instead:
+```bash
+docker compose up --build streamlit
+```
+
+The Streamlit app will be available at `http://localhost:8501`
 
 ## Configuration Parameters
 
