@@ -1,0 +1,208 @@
+Got it — here’s a clean, drop-in prompt you can give your agents. It tells them to produce three linked Markdown docs (Investigation Plan → Execution Plan → Execution Log), with a test-first mindset, consistent filenames, cross-links, and crisp structure.
+
+⸻
+
+Master Orchestration Prompt (for AI Agents)
+
+Role: Senior engineer operating with a test-first mindset.
+Goal: Produce three linked Markdown documents for a task: an Investigation Plan, an Execution Plan, and an Execution Log. Use clear, atomic steps and verifiable outcomes.  PLEASE ENSURE THAT THESE DOCUMENTS ARE IN A SPECIFIC FOLDER RELATED TO THE TASK
+
+Global Rules
+	•	Filenames (stable):
+	•	INVESTIGATION.md
+	•	EXECUTION_PLAN.md
+	•	EXECUTION_LOG.md
+	•	Linking: Every document must include a “Project Links” block at the top that links to the other two docs using relative links exactly as shown below.
+	•	Traceability IDs: Prefix each item (hypothesis, decision, step, test, risk) with a unique ID, e.g., H-001, D-003, S-007, T-010, R-002.
+	•	Test-First: For each plan step, define a test you will run to prove it worked (acceptance criteria + verification method).
+	•	Evidence: Save all outputs, diffs, screenshots (if any), and command transcripts referenced in the log as artifacts; note their path in the log.
+	•	Change Safety: Include rollback criteria and a rollback plan for any change-making step.
+
+⸻
+
+Shared Header (include EXACTLY in all three docs)
+
+> **Project Title:** {{PROJECT_TITLE}}
+> **Owner:** {{OWNER}} • **Date:** {{YYYY-MM-DD}} • **Version:** {{SEMVER}}
+> **Status:** {{Draft|In Progress|Blocked|Done}}
+
+### Project Links
+- Investigation Plan → [INVESTIGATION.md](./INVESTIGATION.md)
+- Execution Plan → [EXECUTION_PLAN.md](./EXECUTION_PLAN.md)
+- Execution Log → [EXECUTION_LOG.md](./EXECUTION_LOG.md)
+
+
+⸻
+
+Document 1 — INVESTIGATION.md (Plan the why and what)
+
+Create this first.
+
+# Investigation Plan
+
+{{SHARED_HEADER}}
+
+## 1) Problem Statement
+- **Context:** {{brief background}}
+- **Desired Outcome:** {{one-sentence success condition}}
+- **Constraints/Assumptions:** {{bullets}}
+
+## 2) Stakeholders & RACI
+| Role | Person/Agent | Responsibility |
+|------|--------------|----------------|
+| R |  |  |
+| A |  |  |
+| C |  |  |
+| I |  |  |
+
+## 3) Hypotheses
+- **H-001:** {{falsifiable statement}}
+  - Evidence to confirm/refute: {{data/logs/metrics}}
+- **H-002:** {{...}}
+
+## 4) Questions to Answer
+- **Q-001:** {{question}} → linked test(s): T-00X
+
+## 5) Investigation Tasks (test-first)
+For each task, define expected observable signals and a quick test.
+- **S-001:** {{task}}
+  - Expected signals: {{what will differ if true}}
+  - Test T-001: {{command/check/SQL/query}}  
+  - Artifacts: {{file paths}}
+  - Risk R-001: {{impact x likelihood}}
+
+## 6) Acceptance Criteria (for Investigation Completion)
+- **IC-1:** {{measurable}}
+- **IC-2:** {{measurable}}
+
+## 7) Initial Risks
+| ID | Risk | Impact | Likelihood | Mitigation |
+|----|------|--------|------------|------------|
+| R-001 |  |  |  |  |
+
+## 8) Decision Log (provisional)
+- **D-001:** {{decision}}  
+  - Rationale: {{data from H/Q/T}}  
+  - Alternatives considered: {{short list}}
+
+## 9) Exit Artifacts
+- Links to raw notes, queries, sample data, and logs.
+
+
+⸻
+
+Document 2 — EXECUTION_PLAN.md (Plan the how)
+
+Create this after the investigation clarifies scope. Link each step to hypotheses/decisions/tests.
+
+# Execution Plan
+
+{{SHARED_HEADER}}
+
+## 1) Objective & Scope
+- **Objective:** {{what will be deployed/changed}}
+- **Out of Scope:** {{explicit non-goals}}
+
+## 2) Acceptance Criteria (Go/No-Go)
+- **AC-1:** {{objective metric}}
+- **AC-2:** {{SLO/SLA threshold}}
+- **Monitoring/Telemetry to validate:** {{dashboards/queries}}
+
+## 3) Preconditions & Dependencies
+- Preconditions: {{feature flags, approvals, windows}}
+- Dependencies: {{services, credentials, data availability}}
+- Backout window: {{duration}} | Freeze rules: {{if any}}
+
+## 4) Step-by-Step Plan (each is testable)
+> **Format per step:** ID, goal, commands, expected result, test, evidence, rollback.
+
+### S-101: {{step title}}
+- Goal: {{purpose}}
+- Commands/Actions:
+
+{{commands or pseudo-steps}}
+
+- Expected Result: {{state change}}
+- **Test T-101:** {{how to verify}} (pass/fail thresholds)
+- Evidence: {{artifact path(s)}}
+- Rollback: {{exact inversion steps + test}}
+
+### S-102: {{...}}
+
+## 5) Risks & Mitigations (Execution)
+| ID | Risk | Trigger | Mitigation | Owner |
+|----|------|---------|------------|-------|
+| R-201 |  |  |  |  |
+
+## 6) Communication Plan
+- Before: {{who/when/what}}
+- During: {{updates cadence, channel}}
+- After: {{post-check time, recipients}}
+
+## 7) Approval
+- Change ticket: {{id}}
+- Approvers: {{names}}
+- Scheduled window: {{UTC + local}}
+
+
+⸻
+
+Document 3 — EXECUTION_LOG.md (Evidence & outcomes)
+
+Create this during execution; append entries in time order. Every action must cite its plan step and test.
+
+# Execution Log
+
+{{SHARED_HEADER}}
+
+## 1) Summary
+- Window: {{start → end}}
+- Result: {{Success|Partial|Rolled back|Failed}}
+- Link to Plan: [EXECUTION_PLAN.md](./EXECUTION_PLAN.md)
+
+## 2) Timeline (chronological)
+| Time (UTC) | Actor | Action | Ref (Step/Test) | Expected vs Actual | Result | Artifacts |
+|------------|-------|--------|------------------|--------------------|--------|-----------|
+| 2025-08-09 18:22 | Agent-A | Ran migration | S-101 / T-101 | Expected: {{...}} / Actual: {{...}} | Pass/Fail | `artifacts/migration.out` |
+|  |  |  |  |  |  |  |
+
+## 3) Deviations & Decisions
+- **D-00X:** {{change}}  
+  - Reason: {{data}}  
+  - Impact on AC/SLO: {{none/low/med/high}}
+  - Link back to Plan Step: S-10X
+
+## 4) Issues & Incidents
+| ID | Description | Severity | Root Cause (when known) | Follow-up |
+|----|-------------|----------|--------------------------|-----------|
+| INC-001 |  |  |  |  |
+
+## 5) Post-Execution Validation
+- Tests re-run: T-101, T-102 → results: {{pass/fail}}
+- Metrics observed: {{key graphs or numbers}}
+- Rollback performed? {{Y/N}} (if Y, reference steps & evidence)
+
+## 6) Lessons Learned / Next Actions
+- What to automate next time
+- Permanent fixes / tickets created (IDs)
+
+
+⸻
+
+How to Use (for the Agent)
+	1.	Create INVESTIGATION.md first, using a test-first approach (each hypothesis/task has a test and evidence plan).
+	2.	When investigation criteria are met, draft EXECUTION_PLAN.md that references hypotheses (H-*), decisions (D-*), and defines a test and rollback for every step.
+	3.	Execute while updating EXECUTION_LOG.md live, logging tests (expected vs actual), artifacts, deviations, and incident handling.
+	4.	Ensure the Project Links block appears in all three docs and remains valid.
+	5.	Keep IDs consistent and unique; reuse references across docs to preserve traceability.
+	6.	Close by verifying Acceptance Criteria and recording Lessons Learned.
+
+⸻
+
+Optional: Quickstart ID Conventions
+	•	Hypothesis H-###, Decision D-###, Step S-###, Test T-###, Risk R-###, Incident INC-###.
+	•	Reserve 100–199 for investigation, 200–299 for execution risks, 100–199 steps for plan, 101+ for action steps.
+
+⸻
+
+If you want, I can pre-generate the three empty docs with your project title and owner so you can just start filling things in.
