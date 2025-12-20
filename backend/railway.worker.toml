@@ -1,0 +1,8 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "backend/Dockerfile.worker"
+
+[deploy]
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
