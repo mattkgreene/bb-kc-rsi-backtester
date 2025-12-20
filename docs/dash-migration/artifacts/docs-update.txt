@@ -1,0 +1,6 @@
+Docs and config updates:
+- README.md updated with Dash run instructions and docker compose commands.
+- requirements/dash.txt added.
+- docker/dash.Dockerfile added.
+- docker-compose.yml updated to use dash for ui and retain streamlit service.
+- railway.toml updated to dash dockerfile.

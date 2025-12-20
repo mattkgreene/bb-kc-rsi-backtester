@@ -1,0 +1,3 @@
+Caching approach:
+- Data: fetch_ohlcv_range_cached (disk-backed in app/core/data.py)
+- Backtests: BACKTEST_CACHE in app/ui/dash_app.py keyed by params

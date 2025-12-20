@@ -1,0 +1,4 @@
+Dash UI defaults and state store:
+- DEFAULTS populated from DEFAULT_PRESET and WIDGET-like defaults.
+- dcc.Store: store-results, store-last-params, store-dirty, store-selected-trade.
+- Params assembled in _build_params, including start/end timestamps and risk settings.

@@ -1,0 +1,3 @@
+/Users/matthewgreene/dev/trading/bb-kc-rsi-backtester/app/core/indicators.py:337: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+  df30 = df[['Close']].resample('30T').last().dropna()
+figure_traces 11

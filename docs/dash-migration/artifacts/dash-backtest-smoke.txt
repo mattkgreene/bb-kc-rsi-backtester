@@ -1,0 +1,4 @@
+Backtest callback wired in app/ui/dash_app.py:
+- run_backtest_callback uses fetch_ohlcv_range_cached + run_backtest.
+- Core backtest validated via synthetic data (see core-backtest-smoke.txt).
+- Live data fetch requires CCXT network access; not exercised in this run.

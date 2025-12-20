@@ -1,0 +1,6 @@
+/Users/matthewgreene/dev/trading/bb-kc-rsi-backtester/app/core/indicators.py:337: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+  df30 = df[['Close']].resample('30T').last().dropna()
+stats_keys ['trades', 'win_rate', 'avg_return_pct', 'median_return_pct', 'best_return_pct']
+rows 500
+trades 0
+equity 500
