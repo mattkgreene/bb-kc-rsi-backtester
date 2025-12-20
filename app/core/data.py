@@ -20,6 +20,7 @@ import gzip
 from pathlib import Path
 from typing import Optional, Tuple, List
 
+from core.ohlcv_cache import get_cache_bounds, read_ohlcv_range, upsert_ohlcv, init_ohlcv_cache
 
 def _tf_ms(tf: str) -> int:
     """
@@ -427,3 +428,62 @@ def fetch_ohlcv_range_cached(
         pass
 
     return merged.loc[(merged.index >= s) & (merged.index <= e)]
+
+
+def fetch_ohlcv_range_db_cached(
+    exchange: str,
+    symbol: str,
+    timeframe: str,
+    start_ts: pd.Timestamp,
+    end_ts: pd.Timestamp,
+    *,
+    page_limit: int = 1000,
+    sleep_mult: float = 1.0,
+    db_path: Optional[str | Path] = None,
+) -> pd.DataFrame:
+    """
+    Fetch OHLCV for a date range using a SQLite cache.
+
+    Strategy:
+    - Read bounds from cache.
+    - Fetch missing leading/trailing edges via CCXT.
+    - Upsert fetched data into cache.
+    - Return cached slice for requested range.
+    """
+    init_ohlcv_cache(Path(db_path) if db_path else None)
+
+    s = pd.Timestamp(start_ts)
+    e = pd.Timestamp(end_ts)
+    if s.tzinfo is not None:
+        s = s.tz_convert("UTC").tz_localize(None)
+    if e.tzinfo is not None:
+        e = e.tz_convert("UTC").tz_localize(None)
+
+    bounds = get_cache_bounds(exchange, symbol, timeframe, Path(db_path) if db_path else None)
+
+    missing_ranges: List[Tuple[pd.Timestamp, pd.Timestamp]] = []
+    if bounds.min_ts is None or bounds.max_ts is None:
+        missing_ranges.append((s, e))
+    else:
+        if s < bounds.min_ts:
+            missing_ranges.append((s, min(bounds.min_ts, e)))
+        if e > bounds.max_ts:
+            missing_ranges.append((max(bounds.max_ts, s), e))
+
+    for m_start, m_end in missing_ranges:
+        if m_start >= m_end:
+            continue
+        fetched = fetch_ohlcv_range(
+            exchange,
+            symbol,
+            timeframe,
+            start_ts=m_start,
+            end_ts=m_end,
+            page_limit=page_limit,
+            sleep_mult=sleep_mult,
+        )
+        if fetched is None or fetched.empty:
+            continue
+        upsert_ohlcv(exchange, symbol, timeframe, fetched, Path(db_path) if db_path else None)
+
+    return read_ohlcv_range(exchange, symbol, timeframe, s, e, Path(db_path) if db_path else None)
