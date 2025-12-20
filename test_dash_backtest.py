@@ -4,21 +4,31 @@ Test script to verify the Dash backtest functionality works correctly.
 """
 import sys
 import datetime as dt
-import pandas as pd
+from typing import Optional
 
 sys.path.insert(0, 'app')
 
-from ui.dash_app import (
-    _default_ui_values,
-    _build_params,
-    run_backtest_callback,
-    update_dashboard,
-    update_trades,
-)
-from core.data import fetch_ohlcv_range_db_cached
+IMPORT_ERROR: Optional[Exception] = None
+
+try:
+    import pandas as pd
+
+    from ui.dash_app import (
+        _default_ui_values,
+        _build_params,
+        run_backtest_callback,
+        update_dashboard,
+        update_trades,
+    )
+    from core.data import fetch_ohlcv_range_db_cached
+except Exception as exc:  # pragma: no cover
+    pd = None  # type: ignore[assignment]
+    IMPORT_ERROR = exc
 
 def test_params_initialization():
     """Test that default params are built correctly."""
+    if IMPORT_ERROR:
+        raise RuntimeError(f"Missing optional dependencies: {IMPORT_ERROR}")
     print("\n=== Testing Params Initialization ===")
     defaults = _default_ui_values()
     params = _build_params(defaults)
@@ -37,6 +47,8 @@ def test_params_initialization():
 
 def test_data_fetch(params):
     """Test that data can be fetched."""
+    if IMPORT_ERROR:
+        raise RuntimeError(f"Missing optional dependencies: {IMPORT_ERROR}")
     print("\n=== Testing Data Fetch ===")
 
     # Use a smaller date range for testing
@@ -61,6 +73,8 @@ def test_data_fetch(params):
 
 def test_backtest_callback():
     """Test the backtest callback with minimal params."""
+    if IMPORT_ERROR:
+        raise RuntimeError(f"Missing optional dependencies: {IMPORT_ERROR}")
     print("\n=== Testing Backtest Callback ===")
 
     defaults = _default_ui_values()
@@ -92,6 +106,8 @@ def test_backtest_callback():
 
 def test_dashboard_update(results):
     """Test that dashboard updates correctly with results."""
+    if IMPORT_ERROR:
+        raise RuntimeError(f"Missing optional dependencies: {IMPORT_ERROR}")
     print("\n=== Testing Dashboard Update ===")
 
     message, metrics, figure = update_dashboard(results, ['on'], ['on'], None)
@@ -108,6 +124,8 @@ def test_dashboard_update(results):
 
 def test_trades_update(results):
     """Test that trades table updates correctly."""
+    if IMPORT_ERROR:
+        raise RuntimeError(f"Missing optional dependencies: {IMPORT_ERROR}")
     print("\n=== Testing Trades Update ===")
 
     (trades_msg, trades_data, trades_cols,
@@ -121,6 +139,13 @@ def test_trades_update(results):
 
 if __name__ == '__main__':
     try:
+        if IMPORT_ERROR:
+            print("=" * 60)
+            print("Dash Backtest Functionality Test")
+            print("=" * 60)
+            print(f"\n- SKIPPED (missing optional deps): {IMPORT_ERROR}")
+            sys.exit(0)
+
         print("=" * 60)
         print("Dash Backtest Functionality Test")
         print("=" * 60)
