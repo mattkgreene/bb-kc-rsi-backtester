@@ -313,7 +313,7 @@ def run_grid_search(
                 exit_level=params.get("exit_level", "mid"),
                 cash=params.get("cash", 10000),
                 commission=params.get("commission", 0.001),
-                trade_mode=params.get("trade_mode", "Simple (1x spot-style)"),
+                trade_mode=params.get("trade_mode", "Margin / Futures"),
                 use_stop=params.get("use_stop", True),
                 stop_mode=params.get("stop_mode", "Fixed %"),
                 stop_pct=params.get("stop_pct", 2.0),

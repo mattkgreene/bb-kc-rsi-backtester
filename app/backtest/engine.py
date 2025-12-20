@@ -11,8 +11,7 @@ The strategy is short-only, entering when price touches upper bands
 with high RSI, and exiting on mean reversion to mid/lower bands or
 via stop loss/trailing stop/time stop.
 
-Trade Modes:
-- Simple (1x spot-style): No leverage, position = equity / price
+Trade Mode:
 - Margin / Futures: Leverage-based sizing with liquidation simulation
 """
 
@@ -204,7 +203,7 @@ def run_strategy_loop(
     # Risk management and account settings
     cash: float = 10_000.0,
     commission: float = 0.0005,
-    trade_mode: str = "Simple (1x spot-style)",
+    trade_mode: str = "Margin / Futures",
     use_stop: bool = True,
     stop_mode: Literal["Fixed %", "ATR"] = "Fixed %",
     stop_pct: float = 2.0,
@@ -244,7 +243,7 @@ def run_strategy_loop(
         Risk Management:
             cash: Starting capital.
             commission: Trading fee as fraction (e.g., 0.001 = 0.1%).
-            trade_mode: 'Simple (1x spot-style)' or 'Margin / Futures'.
+            trade_mode: 'Margin / Futures'.
             use_stop: Enable stop loss.
             stop_mode: 'Fixed %' or 'ATR' based stop.
             stop_pct: Fixed stop loss percentage.
@@ -415,78 +414,65 @@ def run_strategy_loop(
                     equity_before = equity
 
                     # ==========================================================
-                    # Position Sizing based on Trade Mode
+                    # Position Sizing (Margin / Futures)
                     # ==========================================================
-                    
-                    if "Simple" in trade_mode:
-                        # SPOT MODE: No leverage, full equity as notional
-                        notional = equity_before
-                        size = notional / entry_px
-                        effective_leverage = 1.0
-                        margin_util = float("nan")
-                        risk_dollars = float("nan")
+                    if use_stop:
+                        # Calculate stop price first for risk-based sizing
                         stop_price = compute_stop_price_short(entry_px, i)
-
-                    else:
-                        # MARGIN / FUTURES MODE: Risk-based sizing with leverage
-                        if use_stop:
-                            # Calculate stop price first for risk-based sizing
-                            stop_price = compute_stop_price_short(entry_px, i)
-                            if stop_price is not None and not math.isnan(stop_price):
-                                risk_per_unit = abs(stop_price - entry_px)
-                            else:
-                                # Fallback if stop can't be computed
-                                risk_per_unit = entry_px * 0.01
-                                stop_price = None
-
-                            if risk_per_unit <= 0:
-                                continue
-
-                            # Size position so stop-out risks only X% of equity
-                            if risk_per_trade_pct > 0 and equity_before > 0:
-                                risk_dollars = equity_before * (risk_per_trade_pct / 100.0)
-                                size = risk_dollars / risk_per_unit
-                            else:
-                                size = 1.0
-                                risk_dollars = 0.0
-
-                            notional = size * entry_px
-
-                            # Cap notional at max leverage
-                            if max_leverage is not None and max_leverage > 0:
-                                notional_cap = equity_before * max_leverage
-                                if notional > notional_cap and notional > 0:
-                                    scale = notional_cap / notional
-                                    size *= scale
-                                    notional = size * entry_px
+                        if stop_price is not None and not math.isnan(stop_price):
+                            risk_per_unit = abs(stop_price - entry_px)
                         else:
-                            # No stop: size from max_leverage directly
-                            effective_max_lev = max_leverage if (max_leverage is not None and max_leverage > 0) else 1.0
-                            notional = equity_before * effective_max_lev
-                            size = notional / entry_px
-                            risk_dollars = float("nan")
+                            # Fallback if stop can't be computed
+                            risk_per_unit = entry_px * 0.01
                             stop_price = None
 
-                        # Calculate effective leverage and margin utilization
-                        effective_leverage = notional / equity_before if equity_before > 0 else float("nan")
-                        if max_leverage is not None and max_leverage > 0 and equity_before > 0:
-                            margin_util = notional / (equity_before * max_leverage)
-                        else:
-                            margin_util = float("nan")
+                        if risk_per_unit <= 0:
+                            continue
 
-                        # Check margin utilization cap (skip trade if exceeded)
-                        if (
-                            trade_mode == "Margin / Futures"
-                            and max_margin_utilization is not None
-                            and max_margin_utilization > 0
-                            and max_leverage is not None
-                            and max_leverage > 0
-                            and equity_before > 0
-                        ):
-                            required_margin = notional / max_leverage
-                            margin_util_pct = (required_margin / equity_before) * 100.0
-                            if margin_util_pct > max_margin_utilization:
-                                continue  # Skip this trade
+                        # Size position so stop-out risks only X% of equity
+                        if risk_per_trade_pct > 0 and equity_before > 0:
+                            risk_dollars = equity_before * (risk_per_trade_pct / 100.0)
+                            size = risk_dollars / risk_per_unit
+                        else:
+                            size = 1.0
+                            risk_dollars = 0.0
+
+                        notional = size * entry_px
+
+                        # Cap notional at max leverage
+                        if max_leverage is not None and max_leverage > 0:
+                            notional_cap = equity_before * max_leverage
+                            if notional > notional_cap and notional > 0:
+                                scale = notional_cap / notional
+                                size *= scale
+                                notional = size * entry_px
+                    else:
+                        # No stop: size from max_leverage directly
+                        effective_max_lev = max_leverage if (max_leverage is not None and max_leverage > 0) else 1.0
+                        notional = equity_before * effective_max_lev
+                        size = notional / entry_px
+                        risk_dollars = float("nan")
+                        stop_price = None
+
+                    # Calculate effective leverage and margin utilization
+                    effective_leverage = notional / equity_before if equity_before > 0 else float("nan")
+                    if max_leverage is not None and max_leverage > 0 and equity_before > 0:
+                        margin_util = notional / (equity_before * max_leverage)
+                    else:
+                        margin_util = float("nan")
+
+                    # Check margin utilization cap (skip trade if exceeded)
+                    if (
+                        max_margin_utilization is not None
+                        and max_margin_utilization > 0
+                        and max_leverage is not None
+                        and max_leverage > 0
+                        and equity_before > 0
+                    ):
+                        required_margin = notional / max_leverage
+                        margin_util_pct = (required_margin / equity_before) * 100.0
+                        if margin_util_pct > max_margin_utilization:
+                            continue  # Skip this trade
 
                     # Calculate commission cost on entry
                     entry_commission = notional * commission
@@ -514,8 +500,7 @@ def run_strategy_loop(
                     # Calculate liquidation price for Margin/Futures mode
                     # Liquidation occurs when equity falls to maintenance margin
                     if (
-                        trade_mode == "Margin / Futures"
-                        and maintenance_margin_pct is not None
+                        maintenance_margin_pct is not None
                         and maintenance_margin_pct > 0
                         and size > 0
                     ):
@@ -569,7 +554,6 @@ def run_strategy_loop(
             # 5) Check liquidation (Margin/Futures only)
             if (
                 exit_reason is None
-                and trade_mode == "Margin / Futures"
                 and maintenance_margin_pct is not None
                 and maintenance_margin_pct > 0
             ):
@@ -987,7 +971,7 @@ def run_backtest(
     exit_level: str,
     cash: float = 10_000.0,
     commission: float = 0.0005,
-    trade_mode: str = "Simple (1x spot-style)",
+    trade_mode: str = "Margin / Futures",
     use_stop: bool = True,
     stop_mode: str = "Fixed %",
     stop_pct: float = 2.0,
@@ -1020,7 +1004,7 @@ def run_backtest(
         exit_channel, exit_level: Signal exit configuration.
         cash: Starting capital.
         commission: Trading fee fraction.
-        trade_mode: 'Simple' or 'Margin / Futures'.
+        trade_mode: 'Margin / Futures'.
         use_stop, stop_mode, stop_pct, stop_atr_mult: Stop loss settings.
         use_trailing, trail_pct: Trailing stop settings.
         max_bars_in_trade: Time-based exit.

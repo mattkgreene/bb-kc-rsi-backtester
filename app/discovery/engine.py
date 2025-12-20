@@ -89,7 +89,7 @@ def _run_single_backtest(args: Tuple[Dict, Dict, str]) -> Optional[Dict]:
             exit_level=params.get("exit_level", "mid"),
             cash=params.get("cash", 10000),
             commission=params.get("commission", 0.001),
-            trade_mode=params.get("trade_mode", "Simple (1x spot-style)"),
+            trade_mode=params.get("trade_mode", "Margin / Futures"),
             use_stop=params.get("use_stop", True),
             stop_mode=params.get("stop_mode", "Fixed %"),
             stop_pct=params.get("stop_pct", 2.0),
@@ -270,7 +270,7 @@ FULL_MARGIN_DISCOVERY_GRID: Dict[str, List[Any]] = {
     "kc_mult": [1.9, 2.0, 2.1],
     
     # Trade Mode
-    "trade_mode": ["Simple (1x spot-style)", "Margin / Futures"],
+    "trade_mode": ["Margin / Futures"],
     
     # Leverage (margin mode only)
     "max_leverage": [2.0, 5.0, 10.0],
@@ -334,7 +334,6 @@ def filter_invalid_combinations(
     - use_trailing=False with specific trail_pct
     - use_stop=False with specific stop_pct
     - use_rsi_relation=False with specific rsi_relation
-    - Simple trade mode with margin-specific params
     - Fixed % stop mode with ATR multiplier
     - ATR stop mode with fixed stop %
     """
@@ -368,15 +367,6 @@ def filter_invalid_combinations(
         elif stop_mode == "ATR":
             # ATR mode: stop_pct doesn't matter
             normalized.pop("stop_pct", None)
-        
-        # Handle trade mode specifics
-        trade_mode = combo.get("trade_mode", "Simple (1x spot-style)")
-        if "Simple" in trade_mode:
-            # Simple mode: margin params don't matter
-            normalized.pop("max_leverage", None)
-            normalized.pop("maintenance_margin_pct", None)
-            normalized.pop("max_margin_utilization", None)
-            # Risk per trade still matters for position sizing awareness
         
         # Create hash for deduplication
         combo_hash = str(sorted(normalized.items()))
@@ -517,7 +507,7 @@ def run_discovery(
                 exit_level=params.get("exit_level", "mid"),
                 cash=params.get("cash", 10000),
                 commission=params.get("commission", 0.001),
-                trade_mode=params.get("trade_mode", "Simple (1x spot-style)"),
+                trade_mode=params.get("trade_mode", "Margin / Futures"),
                 use_stop=params.get("use_stop", True),
                 stop_mode=params.get("stop_mode", "Fixed %"),
                 stop_pct=params.get("stop_pct", 2.0),
@@ -971,8 +961,8 @@ def create_margin_discovery_grid(
         "entry_band_mode": ["Either", "KC", "Both"],
         "exit_level": ["mid", "lower"],
         
-        # Trade mode - test both simple and margin
-        "trade_mode": ["Simple (1x spot-style)", "Margin / Futures"],
+        # Trade mode
+        "trade_mode": ["Margin / Futures"],
         
         # Margin params
         "max_leverage": leverage_options,
@@ -1006,7 +996,7 @@ def estimate_filtered_combinations(param_grid: Dict[str, List[Any]]) -> int:
     Estimate the number of valid combinations after filtering.
     
     This accounts for combinations that will be filtered out
-    (e.g., Simple mode with margin params, ATR mode with fixed stop %).
+    (e.g., ATR mode with fixed stop %).
     
     Args:
         param_grid: Parameter grid to estimate
@@ -1019,16 +1009,6 @@ def estimate_filtered_combinations(param_grid: Dict[str, List[Any]]) -> int:
     
     # Quick estimate based on known filters
     reduction_factor = 1.0
-    
-    # If both trade modes, margin params don't apply to Simple (~50% reduction)
-    if "trade_mode" in param_grid:
-        modes = param_grid["trade_mode"]
-        if len(modes) == 2:  # Both Simple and Margin
-            margin_params = {"max_leverage", "maintenance_margin_pct", "max_margin_utilization"}
-            margin_param_count = sum(1 for p in margin_params if p in param_grid)
-            if margin_param_count > 0:
-                # Rough estimate: half the combinations lose margin significance
-                reduction_factor *= 0.6
     
     # If both stop modes, params don't cross-apply (~50% reduction)
     if "stop_mode" in param_grid:

@@ -12,7 +12,7 @@ from discovery.database import DiscoveryDatabase, WinCriteria, BacktestRun
 from discovery.engine import (
     run_discovery, run_discovery_parallel, DiscoveryConfig, 
     QUICK_DISCOVERY_GRID, FOCUSED_DISCOVERY_GRID, MARGIN_PARAM_GRID,
-    create_discovery_grid, create_margin_discovery_grid,
+    create_margin_discovery_grid,
     count_combinations, estimate_discovery_time, get_cpu_count,
     estimate_filtered_combinations
 )
@@ -282,7 +282,7 @@ WIDGET_DEFAULTS = {
     "w_exit_channel": DEFAULT_PRESET.get("exit_channel", "BB"),
     "w_exit_level": DEFAULT_PRESET.get("exit_level", "mid"),
     # Risk Management
-    "w_trade_mode": DEFAULT_PRESET.get("trade_mode", "Simple (1x spot-style)"),
+    "w_trade_mode": DEFAULT_PRESET.get("trade_mode", "Margin / Futures"),
     "w_use_stop": DEFAULT_PRESET.get("use_stop", False),
     "w_stop_mode": DEFAULT_PRESET.get("stop_mode", "Fixed %"),
     "w_stop_pct": float(DEFAULT_PRESET.get("stop_pct", 2.0) or 2.0),
@@ -578,7 +578,7 @@ with st.sidebar:
         cash = st.number_input("Starting cash", 100, 1_000_000_000, 10_000, 100, key="w_cash")
         commission = st.number_input("Commission (fraction)", 0.0, 0.01, 0.001, 0.0001, key="w_commission")
 
-        trade_mode_options = ["Simple (1x spot-style)", "Margin / Futures"]
+        trade_mode_options = ["Margin / Futures"]
         trade_mode = st.selectbox(
             "Trade mode",
             trade_mode_options,
@@ -715,7 +715,7 @@ def _snapshot_params():
         "daily_loss_limit": daily_loss_limit,
         "risk_per_trade_pct": risk_per_trade_pct,
 
-        # margin/futures (may be None in simple mode)
+        # margin/futures
         "max_leverage": max_leverage,
         "maintenance_margin_pct": maintenance_margin_pct,
         "max_margin_utilization": max_margin_utilization,
@@ -1356,13 +1356,8 @@ if st.session_state.get("run_ready", False) and st.session_state.results is not 
             
             with disc_col2:
                 st.caption("Margin/Risk")
-                disc_include_margin = st.checkbox("Include Margin Mode", value=True, key="disc_include_margin")
-                if disc_include_margin:
-                    disc_leverage_options = st.multiselect("Leverage", [2.0, 3.0, 5.0, 10.0, 20.0], [2.0, 5.0, 10.0], key="disc_leverage_options")
-                    disc_risk_options = st.multiselect("Risk %", [0.5, 1.0, 1.5, 2.0, 3.0], [0.5, 1.0, 2.0], key="disc_risk_options")
-                else:
-                    disc_leverage_options = []
-                    disc_risk_options = [1.0]
+                disc_leverage_options = st.multiselect("Leverage", [2.0, 3.0, 5.0, 10.0, 20.0], [2.0, 5.0, 10.0], key="disc_leverage_options")
+                disc_risk_options = st.multiselect("Risk %", [0.5, 1.0, 1.5, 2.0, 3.0], [0.5, 1.0, 2.0], key="disc_risk_options")
                 disc_include_atr = st.checkbox("Include ATR Stops", value=True, key="disc_include_atr")
                 disc_include_trailing = st.checkbox("Include Trailing", value=True, key="disc_include_trailing")
             
@@ -1374,29 +1369,17 @@ if st.session_state.get("run_ready", False) and st.session_state.results is not 
                 disc_min_pf = st.number_input("Min Profit Factor", 0.5, 3.0, 1.0, key="disc_min_pf")
             
             # Build discovery grid based on settings
-            if disc_include_margin:
-                disc_grid = create_margin_discovery_grid(
-                    rsi_range=(int(disc_rsi_range[0]), int(disc_rsi_range[1])),
-                    rsi_ma_range=(int(disc_rsi_ma_range[0]), int(disc_rsi_ma_range[1])),
-                    band_mult_range=disc_band_range,
-                    leverage_options=disc_leverage_options if disc_leverage_options else [5.0],
-                    risk_pct_options=disc_risk_options if disc_risk_options else [1.0],
-                    include_atr_stops=disc_include_atr,
-                    include_trailing=disc_include_trailing,
-                    rsi_step=2,
-                    mult_step=0.1,
-                )
-            else:
-                disc_grid = create_discovery_grid(
-                    rsi_range=(int(disc_rsi_range[0]), int(disc_rsi_range[1])),
-                    rsi_ma_range=(int(disc_rsi_ma_range[0]), int(disc_rsi_ma_range[1])),
-                    band_mult_range=disc_band_range,
-                    stop_range=(1.5, 2.5),
-                    rsi_step=2,
-                    mult_step=0.1,
-                    stop_step=0.5,
-                    include_all_modes=True
-                )
+            disc_grid = create_margin_discovery_grid(
+                rsi_range=(int(disc_rsi_range[0]), int(disc_rsi_range[1])),
+                rsi_ma_range=(int(disc_rsi_ma_range[0]), int(disc_rsi_ma_range[1])),
+                band_mult_range=disc_band_range,
+                leverage_options=disc_leverage_options if disc_leverage_options else [5.0],
+                risk_pct_options=disc_risk_options if disc_risk_options else [1.0],
+                include_atr_stops=disc_include_atr,
+                include_trailing=disc_include_trailing,
+                rsi_step=2,
+                mult_step=0.1,
+            )
             
             # Get current database stats
             db_stats = discovery_db.get_statistics()

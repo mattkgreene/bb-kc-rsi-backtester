@@ -63,8 +63,8 @@ class StrategyPreset(TypedDict, total=False):
     daily_loss_limit: float
     risk_per_trade_pct: float
     
-    # Trade Mode (for margin/futures)
-    trade_mode: Literal["Simple (1x spot-style)", "Margin / Futures"]
+    # Trade Mode (margin/futures only)
+    trade_mode: Literal["Margin / Futures"]
     max_leverage: Optional[float]
     maintenance_margin_pct: Optional[float]
     max_margin_utilization: Optional[float]
@@ -75,60 +75,54 @@ class StrategyPreset(TypedDict, total=False):
 # =============================================================================
 
 DEFAULT_PRESET: StrategyPreset = {
-    "name": "Default",
-    "description": "Balanced default configuration",
-    "category": "balanced",
-    
+    "name": "High Profit Factor",
+    "description": "Optimized for maximum profit factor (PF 2.0-3.0). Uses ATR stops and trailing to let winners run while cutting losers.",
+    "category": "aggressive",
+
     # Bollinger Bands
     "bb_len": 20,
     "bb_std": 2.0,
     "bb_basis_type": "sma",
-    
+
     # Keltner Channel
     "kc_ema_len": 20,
     "kc_atr_len": 14,
     "kc_mult": 2.0,
     "kc_mid_type": "ema",
-    
+
     # RSI
     "rsi_len_30m": 14,
     "rsi_ma_len": 10,
     "rsi_smoothing_type": "ema",
     "rsi_ma_type": "sma",
-    
-    # Entry
-    "rsi_min": 70,
+
+    # Entry - Balanced RSI thresholds for good signal quality
+    "rsi_min": 72,
     "rsi_ma_min": 70,
     "use_rsi_relation": True,
     "rsi_relation": ">=",
     "entry_band_mode": "Either",
-    
-    # Exit
+
+    # Exit - Target lower band for larger moves
     "exit_channel": "BB",
-    "exit_level": "mid",
-    
-    # Risk
-    # Defaulting to *no stop* while also defaulting to margin/futures is a
-    # recipe for liquidation in trending markets. Keep the default safe.
+    "exit_level": "lower",
+
+    # Risk - ATR-based stops with trailing to maximize profit factor
     "use_stop": True,
-    "stop_mode": "Fixed %",
-    "stop_pct": 2.0,
+    "stop_mode": "ATR",
+    "stop_pct": 2.0,  # Fallback if ATR not available
     "stop_atr_mult": 2.0,
-    "use_trailing": False,
-    "trail_pct": 1.0,
-    "max_bars_in_trade": 100,
-    "daily_loss_limit": 3.0,
-    "risk_per_trade_pct": 1.0,
-    
-    # Trade mode
-    # Keep Margin/Futures enabled by default, but do it safely:
-    # - require a stop
-    # - cap leverage
-    # - cap margin utilization
+    "use_trailing": True,
+    "trail_pct": 1.5,
+    "max_bars_in_trade": 80,
+    "daily_loss_limit": 4.0,
+    "risk_per_trade_pct": 1.5,
+
+    # Trade mode - Margin/Futures optimized for profit factor
     "trade_mode": "Margin / Futures",
-    "max_leverage": 5.0,
+    "max_leverage": 3.0,
     "maintenance_margin_pct": 0.5,
-    "max_margin_utilization": 70.0,
+    "max_margin_utilization": 80.0,
 }
 
 
@@ -182,12 +176,12 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "daily_loss_limit": 2.0,
         "risk_per_trade_pct": 0.5,  # Small position size
         
-        "trade_mode": "Simple (1x spot-style)",
-        "max_leverage": None,
-        "maintenance_margin_pct": None,
-        "max_margin_utilization": None,
+        "trade_mode": "Margin / Futures",
+        "max_leverage": 2.0,  # Low leverage for capital preservation
+        "maintenance_margin_pct": 0.5,
+        "max_margin_utilization": 60.0,  # Conservative margin usage
     },
-    
+
     "low_drawdown": {
         "name": "Low Drawdown",
         "description": "Minimizes maximum drawdown with very conservative entries and strict daily limits. Sacrifices returns for stability.",
@@ -224,12 +218,12 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "daily_loss_limit": 1.5,  # Strict daily limit
         "risk_per_trade_pct": 0.3,  # Very small positions
         
-        "trade_mode": "Simple (1x spot-style)",
-        "max_leverage": None,
-        "maintenance_margin_pct": None,
-        "max_margin_utilization": None,
+        "trade_mode": "Margin / Futures",
+        "max_leverage": 1.5,  # Minimal leverage for lowest drawdown
+        "maintenance_margin_pct": 0.5,
+        "max_margin_utilization": 50.0,  # Very conservative margin usage
     },
-    
+
     # -------------------------------------------------------------------------
     # AGGRESSIVE STRATEGIES - Focus on profit factor and larger gains
     # -------------------------------------------------------------------------
@@ -270,12 +264,12 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "daily_loss_limit": 5.0,
         "risk_per_trade_pct": 2.0,  # Larger positions
         
-        "trade_mode": "Simple (1x spot-style)",
-        "max_leverage": None,
-        "maintenance_margin_pct": None,
-        "max_margin_utilization": None,
+        "trade_mode": "Margin / Futures",
+        "max_leverage": 3.0,  # Moderate leverage for aggressive strategy
+        "maintenance_margin_pct": 0.5,
+        "max_margin_utilization": 80.0,  # Higher utilization for returns
     },
-    
+
     "high_profit_factor": {
         "name": "High Profit Factor",
         "description": "Optimized specifically for maximum profit factor. Uses ATR stops and trailing to let winners run while cutting losers.",
@@ -312,12 +306,12 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "daily_loss_limit": 4.0,
         "risk_per_trade_pct": 1.5,
         
-        "trade_mode": "Simple (1x spot-style)",
-        "max_leverage": None,
-        "maintenance_margin_pct": None,
-        "max_margin_utilization": None,
+        "trade_mode": "Margin / Futures",
+        "max_leverage": 3.0,  # Same as default - balanced for profit factor
+        "maintenance_margin_pct": 0.5,
+        "max_margin_utilization": 80.0,  # Higher utilization for returns
     },
-    
+
     # -------------------------------------------------------------------------
     # SPECIALIZED STRATEGIES - Specific trading styles
     # -------------------------------------------------------------------------
@@ -358,12 +352,12 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "daily_loss_limit": 3.0,
         "risk_per_trade_pct": 0.5,
         
-        "trade_mode": "Simple (1x spot-style)",
-        "max_leverage": None,
-        "maintenance_margin_pct": None,
-        "max_margin_utilization": None,
+        "trade_mode": "Margin / Futures",
+        "max_leverage": 2.5,  # Moderate leverage for quick trades
+        "maintenance_margin_pct": 0.5,
+        "max_margin_utilization": 70.0,  # Standard utilization
     },
-    
+
     "swing": {
         "name": "Swing Trading",
         "description": "Longer-term trades targeting larger moves. Wider stops, longer holding period, exits at lower band. Fewer but bigger trades.",
@@ -400,12 +394,12 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "daily_loss_limit": 5.0,
         "risk_per_trade_pct": 1.0,
         
-        "trade_mode": "Simple (1x spot-style)",
-        "max_leverage": None,
-        "maintenance_margin_pct": None,
-        "max_margin_utilization": None,
+        "trade_mode": "Margin / Futures",
+        "max_leverage": 2.0,  # Lower leverage for longer holds
+        "maintenance_margin_pct": 0.5,
+        "max_margin_utilization": 70.0,  # Standard utilization
     },
-    
+
     "momentum_burst": {
         "name": "Momentum Burst",
         "description": "Catches extreme overbought conditions with very high RSI requirements. Fewer trades but high-probability setups.",
@@ -442,12 +436,12 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "daily_loss_limit": 3.0,
         "risk_per_trade_pct": 1.5,
         
-        "trade_mode": "Simple (1x spot-style)",
-        "max_leverage": None,
-        "maintenance_margin_pct": None,
-        "max_margin_utilization": None,
+        "trade_mode": "Margin / Futures",
+        "max_leverage": 3.0,  # Higher leverage for high-conviction setups
+        "maintenance_margin_pct": 0.5,
+        "max_margin_utilization": 80.0,  # Higher utilization for quality trades
     },
-    
+
     "mean_reversion": {
         "name": "Mean Reversion Classic",
         "description": "Classic mean reversion setup using standard BB parameters. No trailing stop, relies on price returning to mean.",
@@ -484,10 +478,10 @@ STRATEGY_PRESETS: Dict[str, StrategyPreset] = {
         "daily_loss_limit": 3.0,
         "risk_per_trade_pct": 1.0,
         
-        "trade_mode": "Simple (1x spot-style)",
-        "max_leverage": None,
-        "maintenance_margin_pct": None,
-        "max_margin_utilization": None,
+        "trade_mode": "Margin / Futures",
+        "max_leverage": 2.5,  # Moderate leverage for balanced approach
+        "maintenance_margin_pct": 0.5,
+        "max_margin_utilization": 70.0,  # Standard utilization
     },
 }
 
