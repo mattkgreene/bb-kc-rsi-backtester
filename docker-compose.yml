@@ -2,15 +2,19 @@ services:
   ui:
     build:
       context: .
-      dockerfile: docker/dash.Dockerfile
+      dockerfile: frontend/Dockerfile
     ports:
       - "8050:8050"
     volumes:
       - ./app:/workspace/app
+      - ./frontend:/workspace/frontend
       - ./data:/workspace/data
     environment:
       - PYTHONUNBUFFERED=1
-      - PYTHONPATH=/workspace/app
+      - PYTHONPATH=/workspace:/workspace/app
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      - backend
   streamlit:
     build:
       context: .
@@ -23,3 +27,27 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/workspace/app
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/workspace/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/workspace:/workspace/app
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.worker
+    volumes:
+      - ./data:/workspace/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/workspace:/workspace/app
+    depends_on:
+      - backend
