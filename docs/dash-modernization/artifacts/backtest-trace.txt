@@ -1,0 +1,5 @@
+Dash backtest trace summary:
+- Callback: run_backtest_callback(Input run-backtest, State store-params)
+- Required params: exchange, symbol, timeframe, start_ts, end_ts
+- Fetch path: fetch_ohlcv_range_db_cached -> SQLite cache -> CCXT for missing edges
+- Failure modes: missing params, empty data, network errors on missing edges
