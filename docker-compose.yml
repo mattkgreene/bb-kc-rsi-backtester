@@ -2,6 +2,18 @@ services:
   ui:
     build:
       context: .
+      dockerfile: docker/dash.Dockerfile
+    ports:
+      - "8050:8050"
+    volumes:
+      - ./app:/workspace/app
+      - ./data:/workspace/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/workspace/app
+  streamlit:
+    build:
+      context: .
       dockerfile: docker/streamlit.Dockerfile
     ports:
       - "8501:8501"
