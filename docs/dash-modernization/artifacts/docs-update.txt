@@ -1,0 +1,2 @@
+README.md updated to document Dash OHLCV cache behavior and location.
+- Added note under Dash run instructions about `data/market_data.db` and 3-year warm cache.

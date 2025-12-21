@@ -1,0 +1,2 @@
+app_loaded True
+title BB + KC + RSI Backtester

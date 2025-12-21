@@ -1,0 +1,11 @@
+Dash control mapping implemented in app/ui/dash_app.py:
+- Presets: preset_selector + preset-info
+- Data/timeframe: w_exchange, w_symbol, w_timeframe, w_date_range
+- Indicators: w_bb_len, w_bb_std, w_bb_basis_type, w_kc_ema_len, w_kc_atr_len, w_kc_mult, w_kc_mid_is_ema, w_rsi_len_30m, w_rsi_smoothing_type, w_rsi_ma_len, w_rsi_ma_type
+- Entry/Exit: w_rsi_min, w_rsi_ma_min, w_use_rsi_relation, w_rsi_relation, w_entry_band_mode, w_exit_channel, w_exit_level
+- Capital/Risk: w_cash, w_commission, w_trade_mode, w_use_stop, w_stop_mode, w_stop_pct, w_stop_atr_mult, w_use_trailing, w_trail_pct, w_max_bars_in_trade, w_daily_loss_limit, w_risk_per_trade_pct
+- Margin: w_max_leverage, w_maintenance_margin_pct, w_enable_max_margin_util, w_max_margin_utilization
+
+Param builder sanity check:
+- max_margin_util_disabled -> None
+- max_margin_util_enabled -> 70.0

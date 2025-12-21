@@ -1,0 +1,9 @@
+Attempt 1:
+- python3 -m venv .venv
+- .venv/bin/python -m pip install -r requirements/base.txt -r requirements/dash.txt
+Result: failed to build matplotlib (Python 3.13, no wheels)
+
+Attempt 2:
+- python3.11 -m venv .venv311
+- .venv311/bin/python -m pip install -r requirements/base.txt -r requirements/dash.txt
+Result: success
