@@ -51,7 +51,10 @@ class BackendApiSmokeTests(unittest.TestCase):
         self.assertEqual(resp2.status_code, 200)
         self.assertEqual(resp2.json().get("id"), job_id)
 
+    def test_backtest_requires_params(self):
+        resp = self.client.post("/v1/backtest", json={"params": {}})
+        self.assertEqual(resp.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()
-

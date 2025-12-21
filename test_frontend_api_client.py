@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 import io
+import json
 import os
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
-from frontend.api_client import BackendApiError, cancel_job, list_jobs, request_json
+from frontend.api_client import BackendApiError, cancel_job, list_jobs, request_json, run_backtest
 
 
 class DummyResponse:
@@ -100,6 +101,23 @@ class ApiClientTests(unittest.TestCase):
             self.assertEqual(captured["method"], "POST")
             self.assertIn("/v1/jobs/123/cancel", captured["url"])
             self.assertEqual(job.get("status"), "canceled")
+
+    def test_run_backtest(self):
+        captured = {}
+
+        def fake_urlopen(req, timeout):
+            captured["url"] = req.full_url
+            captured["method"] = req.get_method()
+            payload = json.loads(req.data.decode("utf-8"))
+            captured["payload"] = payload
+            return DummyResponse(b'{"stats": {"ok": true}, "df": null, "ds": null, "trades": null, "equity_curve": [], "params": {}}')
+
+        with patch("frontend.api_client.urlopen", fake_urlopen):
+            resp = run_backtest({"exchange": "bitstamp"})
+            self.assertEqual(captured["method"], "POST")
+            self.assertIn("/v1/backtest", captured["url"])
+            self.assertIn("params", captured["payload"])
+            self.assertIn("stats", resp)
 
 
 if __name__ == "__main__":
