@@ -6,9 +6,9 @@ COPY requirements/base.txt /req/base.txt
 COPY requirements/dash.txt /req/dash.txt
 RUN pip install --no-cache-dir -r /req/base.txt -r /req/dash.txt
 
-COPY app /workspace/app
-ENV PYTHONPATH=/workspace/app
+COPY frontend /workspace/frontend
+ENV PYTHONPATH=/workspace
 
 ENV PORT=8050
 EXPOSE $PORT
-CMD python app/ui/dash_app.py
+CMD python frontend/ui/dash_app.py
