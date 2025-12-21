@@ -65,7 +65,7 @@ def _run_single_backtest(args: Tuple[Dict, Dict, str]) -> Optional[Dict]:
         if index_data is not None:
             df.index = pd.to_datetime(index_data)
         
-        # Run backtest
+        # Run backtest with full parameter support including robustness filters
         stats, ds, trades, equity_curve = run_backtest(
             df,
             timeframe=params.get("timeframe", "30m"),
@@ -102,16 +102,37 @@ def _run_single_backtest(args: Tuple[Dict, Dict, str]) -> Optional[Dict]:
             max_leverage=params.get("max_leverage"),
             maintenance_margin_pct=params.get("maintenance_margin_pct"),
             max_margin_utilization=params.get("max_margin_utilization"),
+            # NEW: Robustness filter parameters
+            use_regime_filter=params.get("use_regime_filter", False),
+            min_mr_score=params.get("min_mr_score", 50.0),
+            max_adx=params.get("max_adx"),
+            block_strong_uptrend=params.get("block_strong_uptrend", True),
+            use_confirmation=params.get("use_confirmation", False),
+            min_momentum_score=params.get("min_momentum_score", 60.0),
+            use_mfi_confirm=params.get("use_mfi_confirm", False),
+            mfi_overbought=params.get("mfi_overbought", 80.0),
+            use_mtf_filter=params.get("use_mtf_filter", False),
+            adx_period=params.get("adx_period", 14),
+            vol_lookback=params.get("vol_lookback", 100),
         )
         
         # Extract metrics
         num_trades = int(stats.get("trades", 0))
         total_return = float(stats.get("total_equity_return_pct", 0))
         profit_factor = float(stats.get("profit_factor", 0))
+        max_drawdown = float(stats.get("max_drawdown_pct", 0))
+        win_rate = float(stats.get("win_rate", 0))
+        sharpe_ratio = float(stats.get("sharpe_ratio", 0))
         
         # Cap infinity profit factor
         if math.isinf(profit_factor):
             profit_factor = 999.0
+        
+        # Calculate a quick robustness score
+        # This helps prioritize strategies likely to work long-term
+        robustness_score = _calculate_quick_robustness(
+            num_trades, win_rate, profit_factor, max_drawdown, total_return
+        )
         
         return {
             "params_hash": params_hash,
@@ -121,18 +142,82 @@ def _run_single_backtest(args: Tuple[Dict, Dict, str]) -> Optional[Dict]:
             "start_date": str(params.get("start_ts", "")),
             "end_date": str(params.get("end_ts", "")),
             "total_return": total_return,
-            "max_drawdown": float(stats.get("max_drawdown_pct", 0)),
+            "max_drawdown": max_drawdown,
             "profit_factor": profit_factor,
-            "win_rate": float(stats.get("win_rate", 0)),
-            "sharpe_ratio": float(stats.get("sharpe_ratio", 0)),
+            "win_rate": win_rate,
+            "sharpe_ratio": sharpe_ratio,
             "sortino_ratio": float(stats.get("sortino_ratio", 0)),
             "calmar_ratio": float(stats.get("calmar_ratio", 0)),
             "num_trades": num_trades,
             "avg_return": float(stats.get("avg_return_pct", 0)),
+            "robustness_score": robustness_score,
         }
         
     except Exception as e:
         return None
+
+
+def _calculate_quick_robustness(
+    num_trades: int,
+    win_rate: float,
+    profit_factor: float,
+    max_drawdown: float,
+    total_return: float
+) -> float:
+    """
+    Calculate a quick robustness score for strategy ranking.
+    
+    This helps identify strategies that are more likely to work
+    in live trading rather than just in backtests.
+    
+    Returns:
+        Score from 0-100, higher = more robust
+    """
+    score = 50.0  # Start at neutral
+    
+    # Trade count scoring (more trades = more confidence)
+    if num_trades < 20:
+        score -= 20
+    elif num_trades < 50:
+        score -= 10
+    elif num_trades >= 100:
+        score += 10
+    
+    # Win rate scoring (avoid extremes)
+    if win_rate < 35:
+        score -= 15
+    elif win_rate > 80:
+        score -= 10  # Suspiciously high
+    elif 45 <= win_rate <= 65:
+        score += 10  # Healthy range
+    
+    # Profit factor scoring
+    if profit_factor < 1.0:
+        score -= 25
+    elif profit_factor < 1.2:
+        score -= 10
+    elif profit_factor > 4.0:
+        score -= 5  # Suspiciously high
+    elif 1.3 <= profit_factor <= 2.5:
+        score += 15  # Good range
+    
+    # Drawdown scoring
+    if max_drawdown > 40:
+        score -= 20
+    elif max_drawdown > 25:
+        score -= 10
+    elif max_drawdown < 15:
+        score += 10
+    
+    # Return vs drawdown (simple Calmar check)
+    if max_drawdown > 0:
+        calmar = total_return / max_drawdown
+        if calmar < 0.5:
+            score -= 10
+        elif calmar >= 1.5:
+            score += 10
+    
+    return max(0, min(100, score))
 
 
 # =============================================================================
@@ -220,6 +305,69 @@ FOCUSED_DISCOVERY_GRID: Dict[str, List[Any]] = {
     "trail_pct": [1.0, 1.5, 2.0],
 }
 # Estimated combinations: 4 * 4 * 3 * 2 * 3 * 3 * 3 * 2 * 3 = 15,552
+
+
+# =============================================================================
+# ROBUST Strategy Discovery Grids
+# =============================================================================
+# These grids are designed to find strategies that work over the LONG TERM
+# by incorporating regime filters and confirmation indicators.
+
+# Robust discovery grid with regime filtering
+ROBUST_DISCOVERY_GRID: Dict[str, List[Any]] = {
+    # RSI thresholds
+    "rsi_min": [70, 72, 74],
+    "rsi_ma_min": [68, 70, 72],
+    
+    # Entry/Exit
+    "entry_band_mode": ["Either", "Both"],
+    "exit_level": ["mid", "lower"],
+    
+    # Bands
+    "bb_std": [1.9, 2.0, 2.1],
+    "kc_mult": [1.9, 2.0, 2.1],
+    
+    # Risk
+    "stop_mode": ["ATR"],
+    "stop_atr_mult": [1.8, 2.0, 2.5],
+    "use_trailing": [True],
+    "trail_pct": [1.2, 1.5, 2.0],
+    
+    # ROBUSTNESS FILTERS - These are KEY for long-term performance
+    "use_regime_filter": [True],
+    "min_mr_score": [50, 60],  # Mean reversion suitability
+    "max_adx": [25, 30],  # Avoid strong trends
+    "block_strong_uptrend": [True],
+}
+# Estimated combinations: ~2,916 with filtering
+
+# Robust grid with confirmation indicators
+ROBUST_CONFIRMATION_GRID: Dict[str, List[Any]] = {
+    "rsi_min": [70, 72, 74],
+    "rsi_ma_min": [68, 70, 72],
+    "entry_band_mode": ["Either", "Both"],
+    "exit_level": ["mid"],
+    
+    "bb_std": [2.0],
+    "kc_mult": [2.0],
+    
+    "stop_mode": ["ATR"],
+    "stop_atr_mult": [1.8, 2.0],
+    "use_trailing": [True],
+    "trail_pct": [1.2, 1.5],
+    
+    # Regime filters
+    "use_regime_filter": [True],
+    "min_mr_score": [50, 60],
+    "max_adx": [25, 30],
+    "block_strong_uptrend": [True],
+    
+    # Confirmation filters
+    "use_confirmation": [True, False],
+    "min_momentum_score": [60, 70],
+    "use_mfi_confirm": [True, False],
+}
+# Tests different confirmation combinations
 
 
 # =============================================================================
