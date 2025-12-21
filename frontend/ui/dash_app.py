@@ -1,9 +1,6 @@
 import datetime as dt
 import json
 import os
-import sys
-import threading
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -23,26 +20,14 @@ from frontend.api_client import (
     get_leaderboard_latest,
     get_patterns,
     list_jobs,
+    run_backtest,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-APP_DIR = REPO_ROOT / "app"
-for p in (str(REPO_ROOT), str(APP_DIR)):
-    if p not in sys.path:
-        sys.path.insert(0, p)
-
-from backtest.engine import run_backtest
-from core.data import fetch_ohlcv_range_db_cached
-from core.presets import DEFAULT_PRESET, STRATEGY_PRESETS
-from discovery.database import DiscoveredRule, WinCriteria
-from discovery.engine import (
-    create_margin_discovery_grid,
-    estimate_discovery_time,
-    get_cpu_count,
-)
-from discovery.rules import get_rule_summary
-from optimization.grid_search import ResultConstraints, analyze_results, create_custom_grid
-from frontend.ui.dash_helpers import build_backtest_figure, build_entry_diagnostics, build_trades_table
+from frontend.features.discovery_helpers import create_margin_discovery_grid, estimate_discovery_time, get_cpu_count
+from frontend.features.optimization import ResultConstraints, analyze_results, create_custom_grid
+from frontend.features.patterns import DiscoveredRule, get_rule_summary
+from frontend.features.presets import DEFAULT_PRESET, STRATEGY_PRESETS
+from frontend.ui.dash_helpers import build_backtest_figure, build_empty_figure, build_entry_diagnostics, build_trades_table
 
 CHECK_ON = "on"
 
@@ -80,14 +65,6 @@ def _safe_float(value: Any, default: float) -> float:
         return default
 
 
-def _serialize_df(df: Optional[pd.DataFrame]) -> Optional[str]:
-    if df is None:
-        return None
-    if df.empty:
-        return df.to_json(orient="split", date_format="iso")
-    return df.to_json(orient="split", date_format="iso")
-
-
 def _deserialize_df(payload: Optional[str]) -> pd.DataFrame:
     if not payload:
         return pd.DataFrame()
@@ -116,9 +93,12 @@ def _default_ui_values() -> Dict[str, Any]:
         "w_rsi_ma_type": DEFAULT_PRESET.get("rsi_ma_type", "sma"),
         "w_rsi_min": DEFAULT_PRESET.get("rsi_min", 70),
         "w_rsi_ma_min": DEFAULT_PRESET.get("rsi_ma_min", 70),
+        "w_rsi_max": DEFAULT_PRESET.get("rsi_max", 30),
+        "w_rsi_ma_max": DEFAULT_PRESET.get("rsi_ma_max", 30),
         "w_use_rsi_relation": _to_checklist(DEFAULT_PRESET.get("use_rsi_relation", True)),
         "w_rsi_relation": DEFAULT_PRESET.get("rsi_relation", ">="),
         "w_entry_band_mode": DEFAULT_PRESET.get("entry_band_mode", "Either"),
+        "w_trade_direction": DEFAULT_PRESET.get("trade_direction", "Short"),
         "w_exit_channel": DEFAULT_PRESET.get("exit_channel", "BB"),
         "w_exit_level": DEFAULT_PRESET.get("exit_level", "mid"),
         "w_trade_mode": DEFAULT_PRESET.get("trade_mode", "Margin / Futures"),
@@ -159,9 +139,12 @@ def _preset_to_ui_values(preset: Dict[str, Any]) -> Dict[str, Any]:
         "w_rsi_ma_type": preset.get("rsi_ma_type", values["w_rsi_ma_type"]),
         "w_rsi_min": preset.get("rsi_min", values["w_rsi_min"]),
         "w_rsi_ma_min": preset.get("rsi_ma_min", values["w_rsi_ma_min"]),
+        "w_rsi_max": preset.get("rsi_max", values["w_rsi_max"]),
+        "w_rsi_ma_max": preset.get("rsi_ma_max", values["w_rsi_ma_max"]),
         "w_use_rsi_relation": _to_checklist(preset.get("use_rsi_relation", True)),
         "w_rsi_relation": preset.get("rsi_relation", values["w_rsi_relation"]),
         "w_entry_band_mode": preset.get("entry_band_mode", values["w_entry_band_mode"]),
+        "w_trade_direction": preset.get("trade_direction", values["w_trade_direction"]),
         "w_exit_channel": preset.get("exit_channel", values["w_exit_channel"]),
         "w_exit_level": preset.get("exit_level", values["w_exit_level"]),
         "w_trade_mode": preset.get("trade_mode", values["w_trade_mode"]),
@@ -228,9 +211,12 @@ def _build_params(values: Dict[str, Any]) -> Dict[str, Any]:
         "rsi_ma_type": values.get("w_rsi_ma_type"),
         "rsi_min": _safe_float(values.get("w_rsi_min"), 70.0),
         "rsi_ma_min": _safe_float(values.get("w_rsi_ma_min"), 70.0),
+        "rsi_max": _safe_float(values.get("w_rsi_max"), 30.0),
+        "rsi_ma_max": _safe_float(values.get("w_rsi_ma_max"), 30.0),
         "use_rsi_relation": _from_checklist(values.get("w_use_rsi_relation")),
         "rsi_relation": values.get("w_rsi_relation"),
         "entry_band_mode": values.get("w_entry_band_mode"),
+        "trade_direction": values.get("w_trade_direction"),
         "exit_channel": values.get("w_exit_channel"),
         "exit_level": values.get("w_exit_level"),
         "cash": _safe_float(values.get("w_cash"), 10_000.0),
@@ -265,6 +251,11 @@ RSI_RELATION_OPTIONS = [">=", ">", "<=", "<"]
 ENTRY_BAND_OPTIONS = ["Either", "KC", "BB", "Both"]
 EXIT_CHANNEL_OPTIONS = ["BB", "KC"]
 EXIT_LEVEL_OPTIONS = ["mid", "lower"]
+TRADE_DIRECTION_OPTIONS = [
+    {"label": "Short only", "value": "Short"},
+    {"label": "Long only", "value": "Long"},
+    {"label": "Long + Short (Blend)", "value": "Both"},
+]
 TRADE_MODE_OPTIONS = ["Simple (1x spot-style)", "Margin / Futures"]
 STOP_MODE_OPTIONS = ["Fixed %", "ATR"]
 
@@ -272,34 +263,6 @@ PRESET_OPTIONS = ["Custom"] + list(STRATEGY_PRESETS.keys())
 PRESET_LABELS = ["Custom (Manual Configuration)"] + [
     STRATEGY_PRESETS[key]["name"] for key in STRATEGY_PRESETS.keys()
 ]
-
-DATA_DIR = REPO_ROOT / "data"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-MARKET_DB_PATH = str(DATA_DIR / "market_data.db")
-
-
-def _warm_market_cache_async() -> None:
-    def _worker():
-        try:
-            end = dt.datetime.utcnow()
-            start = end - dt.timedelta(days=365 * 3)
-            fetch_ohlcv_range_db_cached(
-                "bitstamp",
-                "BTC/USD",
-                "30m",
-                start,
-                end,
-                db_path=MARKET_DB_PATH,
-            )
-        except Exception as exc:
-            print(f"[cache-warm] {exc}")
-
-    thread = threading.Thread(target=_worker, daemon=True)
-    thread.start()
-
-
-if str(os.getenv("WARM_MARKET_CACHE", "")).strip().lower() in {"1", "true", "t", "yes", "y", "on"}:
-    _warm_market_cache_async()
 
 app = Dash(__name__)
 app.title = "BB + KC + RSI Backtester"
@@ -325,12 +288,31 @@ app.layout = html.Div(
         dcc.Store(id="store-job-selected"),
         dcc.Store(id="store-job-detail"),
         dcc.Store(id="store-job-events"),
+        dcc.Store(id="store-theme", storage_type="local", data="light"),
         dcc.Interval(id="backend-poll", interval=1000, n_intervals=0),
         dcc.Download(id="download-diagnostics"),
         dcc.Download(id="download-optimization"),
         dcc.Download(id="download-walkforward"),
         dcc.Download(id="download-leaderboard"),
-        html.H2("BB + KC + RSI Short Strategy", className="page-title"),
+        html.Div(id="theme-sink", style={"display": "none"}),
+        html.Div(
+            [
+                html.H2("BB + KC + RSI Long/Short Strategy", className="page-title"),
+                html.Div(
+                    [
+                        html.Span("Settings", className="settings-label"),
+                        dcc.Checklist(
+                            id="theme-toggle",
+                            options=[{"label": "Dark mode", "value": CHECK_ON}],
+                            value=[],
+                            className="theme-toggle",
+                        ),
+                    ],
+                    className="header-controls",
+                ),
+            ],
+            className="header-bar",
+        ),
         html.Div(
             [
                 html.Div(
@@ -436,10 +418,21 @@ app.layout = html.Div(
                         html.Details(
                             [
                                 html.Summary("Entry / Exit"),
-                                html.Label("RSI minimum (entry)"),
+                                html.Label("Trade direction"),
+                                dcc.Dropdown(
+                                    id="w_trade_direction",
+                                    options=TRADE_DIRECTION_OPTIONS,
+                                    value=DEFAULTS["w_trade_direction"],
+                                    clearable=False,
+                                ),
+                                html.Label("RSI minimum (short entry)"),
                                 dcc.Input(id="w_rsi_min", type="number", value=DEFAULTS["w_rsi_min"], min=0, max=100),
-                                html.Label("RSI MA minimum (entry)"),
+                                html.Label("RSI MA minimum (short entry)"),
                                 dcc.Input(id="w_rsi_ma_min", type="number", value=DEFAULTS["w_rsi_ma_min"], min=0, max=100),
+                                html.Label("RSI maximum (long entry)"),
+                                dcc.Input(id="w_rsi_max", type="number", value=DEFAULTS["w_rsi_max"], min=0, max=100),
+                                html.Label("RSI MA maximum (long entry)"),
+                                dcc.Input(id="w_rsi_ma_max", type="number", value=DEFAULTS["w_rsi_ma_max"], min=0, max=100),
                                 dcc.Checklist(
                                     id="w_use_rsi_relation",
                                     options=[{"label": "Use RSI vs RSI MA", "value": CHECK_ON}],
@@ -466,7 +459,7 @@ app.layout = html.Div(
                                     value=DEFAULTS["w_exit_channel"],
                                     clearable=False,
                                 ),
-                                html.Label("Exit level"),
+                                html.Label("Exit level (short: mid/lower, long: mid/upper)"),
                                 dcc.Dropdown(
                                     id="w_exit_level",
                                     options=[{"label": o, "value": o} for o in EXIT_LEVEL_OPTIONS],
@@ -652,7 +645,7 @@ app.layout = html.Div(
                                                                             step=1,
                                                                             tooltip={"placement": "bottom"},
                                                                         ),
-                                                                        html.Label("Stop Loss % Range"),
+                                                                        html.Label("Stop Loss Range (%, or ATR mult if stop mode = ATR)"),
                                                                         dcc.RangeSlider(
                                                                             id="opt_stop_range",
                                                                             min=0.5,
@@ -1072,6 +1065,7 @@ app.layout = html.Div(
     ],
     style={"padding": "16px"},
     className="app-root",
+    id="app-root",
 )
 
 INPUT_FIELDS = [
@@ -1091,8 +1085,11 @@ INPUT_FIELDS = [
     {"id": "w_rsi_smoothing_type", "prop": "value", "key": "w_rsi_smoothing_type"},
     {"id": "w_rsi_ma_len", "prop": "value", "key": "w_rsi_ma_len"},
     {"id": "w_rsi_ma_type", "prop": "value", "key": "w_rsi_ma_type"},
+    {"id": "w_trade_direction", "prop": "value", "key": "w_trade_direction"},
     {"id": "w_rsi_min", "prop": "value", "key": "w_rsi_min"},
     {"id": "w_rsi_ma_min", "prop": "value", "key": "w_rsi_ma_min"},
+    {"id": "w_rsi_max", "prop": "value", "key": "w_rsi_max"},
+    {"id": "w_rsi_ma_max", "prop": "value", "key": "w_rsi_ma_max"},
     {"id": "w_use_rsi_relation", "prop": "value", "key": "w_use_rsi_relation"},
     {"id": "w_rsi_relation", "prop": "value", "key": "w_rsi_relation"},
     {"id": "w_entry_band_mode", "prop": "value", "key": "w_entry_band_mode"},
@@ -1119,6 +1116,40 @@ INPUT_FIELDS = [
 
 def _values_from_args(values: List[Any]) -> Dict[str, Any]:
     return {field["key"]: value for field, value in zip(INPUT_FIELDS, values)}
+
+
+@app.callback(
+    Output("store-theme", "data"),
+    Input("theme-toggle", "value"),
+    State("store-theme", "data"),
+    prevent_initial_call=True,
+)
+def update_theme_store(toggle_value, stored_theme):
+    theme = "dark" if _from_checklist(toggle_value) else "light"
+    if stored_theme == theme:
+        raise PreventUpdate
+    return theme
+
+
+@app.callback(
+    Output("theme-toggle", "value"),
+    Input("store-theme", "data"),
+)
+def sync_theme_toggle(stored_theme):
+    return [CHECK_ON] if stored_theme == "dark" else []
+
+
+app.clientside_callback(
+    """
+    function(theme) {
+        var selected = theme === "dark" ? "dark" : "light";
+        document.documentElement.setAttribute("data-theme", selected);
+        return "";
+    }
+    """,
+    Output("theme-sink", "children"),
+    Input("store-theme", "data"),
+)
 
 
 @app.callback(
@@ -1166,7 +1197,6 @@ def run_backtest_callback(n_clicks, params):
         print("[BACKTEST] ERROR: Missing parameters")
         return no_update, no_update, no_update, no_update, "Missing parameters."
 
-    print(f"[BACKTEST] Starting backtest with {len(params)} params")
     try:
         params = dict(params)
         cache_key = tuple(sorted((k, str(v)) for k, v in params.items()))
@@ -1174,52 +1204,19 @@ def run_backtest_callback(n_clicks, params):
             cached = BACKTEST_CACHE[cache_key]
             print("[BACKTEST] Loaded from cache")
             return cached, params, False, None, "✓ Backtest loaded from cache."
-        exchange = params.get("exchange")
-        symbol = params.get("symbol")
-        timeframe = params.get("timeframe")
-        start_ts = pd.Timestamp(params.get("start_ts"))
-        end_ts = pd.Timestamp(params.get("end_ts"))
-
-        print(f"[BACKTEST] Fetching data for {exchange} {symbol} {timeframe} from {start_ts} to {end_ts}")
-        df = fetch_ohlcv_range_db_cached(
-            exchange,
-            symbol,
-            timeframe,
-            start_ts=start_ts,
-            end_ts=end_ts,
-            db_path=MARKET_DB_PATH,
-        )
-        print(f"[BACKTEST] Fetched {len(df)} rows")
-        if df.empty:
-            print("[BACKTEST] ERROR: No data in selected range")
-            return {"error": "No data in selected date range."}, no_update, True, None, "✗ No data in selected range."
-
-        bt_params = params.copy()
-        bt_params.pop("exchange", None)
-        bt_params.pop("symbol", None)
-        bt_params.pop("start_ts", None)
-        bt_params.pop("end_ts", None)
-        bt_params.pop("timeframe", None)
-        print(f"[BACKTEST] Running backtest with {len(bt_params)} params...")
-        stats, ds, trades, equity_curve = run_backtest(
-            df,
-            timeframe=timeframe,
-            **bt_params,
-        )
-        print(f"[BACKTEST] Complete! Trades: {len(trades) if trades is not None else 0}, DS rows: {len(ds) if ds is not None else 0}")
-
-        results = {
-            "df": _serialize_df(df),
-            "ds": _serialize_df(ds),
-            "trades": _serialize_df(trades),
-            "stats": stats.to_dict(),
-            "equity_curve": (equity_curve.tolist() if equity_curve is not None else []),
-            "params": params,
-        }
+        print(f"[BACKTEST] Requesting backend backtest with {len(params)} params")
+        results = run_backtest(params)
+        if not isinstance(results, dict) or results.get("error"):
+            err = results.get("error") if isinstance(results, dict) else "Unknown error"
+            return {"error": err}, no_update, True, None, f"✗ Backtest failed: {err}"
         BACKTEST_CACHE[cache_key] = results
+        trades = _deserialize_df(results.get("trades"))
         num_trades = len(trades) if trades is not None else 0
         print(f"[BACKTEST] Success! Returning results")
         return results, params, False, None, f"✓ Backtest complete! {num_trades} trades executed."
+    except BackendApiError as exc:
+        print(f"[BACKTEST] Backend error: {exc}")
+        return {"error": str(exc)}, no_update, True, None, f"✗ Backend error: {exc}"
     except Exception as exc:
         print(f"[BACKTEST] ERROR: {exc}")
         import traceback
@@ -1247,15 +1244,22 @@ def update_params_state(*args):
 
 @app.callback(
     [Output("dashboard-message", "children"), Output("dashboard-metrics", "children"), Output("backtest-figure", "figure")],
-    [Input("store-results", "data"), Input("show_candles", "value"), Input("lock_rsi_y", "value"), Input("store-selected-trade", "data")],
+    [
+        Input("store-results", "data"),
+        Input("show_candles", "value"),
+        Input("lock_rsi_y", "value"),
+        Input("store-selected-trade", "data"),
+        Input("store-theme", "data"),
+    ],
 )
-def update_dashboard(results, show_candles, lock_rsi_y, selected_trade):
+def update_dashboard(results, show_candles, lock_rsi_y, selected_trade, theme):
     print(f"[DASHBOARD] update_dashboard called, results: {type(results)}, has_data: {bool(results)}")
+    theme_value = theme or "light"
     if not results:
-        return "Run a backtest to see results.", [], {}
+        return "Run a backtest to see results.", [], build_empty_figure(theme_value)
     if isinstance(results, dict) and results.get("error"):
         print(f"[DASHBOARD] Error in results: {results.get('error')}")
-        return results.get("error"), [], {}
+        return results.get("error"), [], build_empty_figure(theme_value)
 
     stats = results.get("stats", {})
     ds = _deserialize_df(results.get("ds"))
@@ -1290,6 +1294,7 @@ def update_dashboard(results, show_candles, lock_rsi_y, selected_trade):
         selected_trade=selected_trade,
         show_candles=_from_checklist(show_candles),
         lock_rsi_y=_from_checklist(lock_rsi_y),
+        theme=theme_value,
     )
 
     return "", metric_cards, fig
@@ -1405,6 +1410,8 @@ def update_opt_estimate(rsi_range, stop_range, band_range, steps, include_entry_
     if not rsi_range or not stop_range or not band_range:
         return ""
 
+    base_params = dict(results.get("params", {})) if isinstance(results, dict) else {}
+    stop_mode = base_params.get("stop_mode")
     param_grid = create_custom_grid(
         rsi_range=tuple(rsi_range),
         stop_range=tuple(stop_range),
@@ -1412,6 +1419,7 @@ def update_opt_estimate(rsi_range, stop_range, band_range, steps, include_entry_
         steps=int(steps or 3),
         include_entry_modes=_from_checklist(include_entry_modes),
         include_exit_levels=_from_checklist(include_exit_levels),
+        stop_mode=stop_mode,
     )
 
     total_combos = 1
@@ -1478,6 +1486,7 @@ def run_optimization(n_clicks, results, rsi_range, stop_range, band_range, steps
         steps=int(steps or 3),
         include_entry_modes=_from_checklist(include_entry_modes),
         include_exit_levels=_from_checklist(include_exit_levels),
+        stop_mode=base_params.get("stop_mode"),
     )
 
     constraints = ResultConstraints(

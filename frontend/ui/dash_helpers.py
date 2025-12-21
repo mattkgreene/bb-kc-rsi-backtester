@@ -5,7 +5,62 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from core.utils import calculate_drawdown
+from frontend.features.metrics import calculate_drawdown
+
+
+def _resolve_figure_theme(theme: str) -> dict:
+    theme_value = (theme or "light").lower()
+    dark_mode = theme_value == "dark"
+    return {
+        "dark_mode": dark_mode,
+        "axis_color": "#e2e8f0" if dark_mode else "#1f2933",
+        "grid_color": "rgba(148, 163, 184, 0.2)" if dark_mode else "rgba(15, 23, 42, 0.08)",
+        "axis_line_color": "rgba(148, 163, 184, 0.4)" if dark_mode else "rgba(15, 23, 42, 0.2)",
+        "plot_bg": "#0f1720" if dark_mode else "#ffffff",
+        "bb_line_color": "#94a3b8" if dark_mode else "gray",
+        "kc_line_color": "#60a5fa" if dark_mode else "blue",
+        "annotation_color": "#e2e8f0" if dark_mode else "#1f2933",
+    }
+
+
+def _apply_figure_theme(fig: go.Figure, theme: dict) -> None:
+    axis_color = theme["axis_color"]
+    grid_color = theme["grid_color"]
+    axis_line_color = theme["axis_line_color"]
+    plot_bg = theme["plot_bg"]
+
+    fig.update_layout(
+        paper_bgcolor=plot_bg,
+        plot_bgcolor=plot_bg,
+        font=dict(color=axis_color),
+    )
+    fig.update_annotations(font_color=axis_color)
+    fig.update_xaxes(
+        showline=True,
+        linecolor=axis_line_color,
+        gridcolor=grid_color,
+        zerolinecolor=grid_color,
+        tickfont=dict(color=axis_color),
+        titlefont=dict(color=axis_color),
+    )
+    fig.update_yaxes(
+        showline=True,
+        linecolor=axis_line_color,
+        gridcolor=grid_color,
+        zerolinecolor=grid_color,
+        tickfont=dict(color=axis_color),
+        titlefont=dict(color=axis_color),
+    )
+
+
+def build_empty_figure(theme: str = "light") -> go.Figure:
+    fig = go.Figure()
+    theme_values = _resolve_figure_theme(theme)
+    _apply_figure_theme(fig, theme_values)
+    fig.update_layout(margin=dict(l=10, r=10, t=40, b=10), height=700)
+    fig.update_xaxes(showgrid=True)
+    fig.update_yaxes(showgrid=True)
+    return fig
 
 
 def build_trades_table(trades_obj) -> pd.DataFrame:
@@ -48,7 +103,9 @@ def build_trades_table(trades_obj) -> pd.DataFrame:
     ret_pct = pd.to_numeric(t["ReturnPct"], errors="coerce")
     out["Price Move %"] = (ret_pct * 100).round(3)
     out["Duration"] = out["ExitTime"] - out["EntryTime"]
-    out["PnL (per unit)"] = out["Price@Entry"] - out["Price@Exit"]
+    side = out["Side"].fillna("Short")
+    pnl_per_unit = out["Price@Exit"] - out["Price@Entry"]
+    out["PnL (per unit)"] = pnl_per_unit.where(side == "Long", -pnl_per_unit)
 
     return out
 
@@ -78,6 +135,8 @@ def build_entry_diagnostics(trades_table: pd.DataFrame, ds: pd.DataFrame) -> pd.
         except Exception:
             ei = None
 
+        side = r.get("Side", "Short")
+
         def _safe(col, idx):
             try:
                 return float(ds[col].iloc[idx])
@@ -103,6 +162,7 @@ def build_entry_diagnostics(trades_table: pd.DataFrame, ds: pd.DataFrame) -> pd.
             row = {
                 "EntryTime": r.get(time_col),
                 "EntryBar": r.get(bar_col),
+                "Side": side,
                 "Price@Entry (ds)": float("nan"),
                 "RSI@Entry": float("nan"),
                 "RSI_MA@Entry": float("nan"),
@@ -136,17 +196,26 @@ def build_entry_diagnostics(trades_table: pd.DataFrame, ds: pd.DataFrame) -> pd.
             continue
 
         px = _safe("Close", ei)
+        high_px = _safe("High", ei)
+        low_px = _safe("Low", ei)
         rsi_v = _safe("rsi30", ei) if "rsi30" in ds.columns else float("nan")
         rma_v = _safe("rsi30_ma", ei) if "rsi30_ma" in ds.columns else float("nan")
         bb_u = _safe("bb_up", ei) if "bb_up" in ds.columns else float("nan")
+        bb_l = _safe("bb_low", ei) if "bb_low" in ds.columns else float("nan")
         kc_u = _safe("kc_up", ei) if "kc_up" in ds.columns else float("nan")
+        kc_l = _safe("kc_low", ei) if "kc_low" in ds.columns else float("nan")
 
-        touch_kc = (px >= kc_u) if pd.notna(kc_u) else False
-        touch_bb = (px >= bb_u) if pd.notna(bb_u) else False
+        if side == "Long":
+            touch_kc = (low_px <= kc_l) if pd.notna(kc_l) else False
+            touch_bb = (low_px <= bb_l) if pd.notna(bb_l) else False
+        else:
+            touch_kc = (high_px >= kc_u) if pd.notna(kc_u) else False
+            touch_bb = (high_px >= bb_u) if pd.notna(bb_u) else False
 
         row = {
             "EntryTime": r.get(time_col),
             "EntryBar": ei,
+            "Side": side,
             "Price@Entry (ds)": px,
             "RSI@Entry": rsi_v,
             "RSI_MA@Entry": rma_v,
@@ -189,9 +258,17 @@ def build_backtest_figure(
     selected_trade: Optional[dict] = None,
     show_candles: bool = True,
     lock_rsi_y: bool = True,
+    theme: str = "light",
 ):
     if ds is None or ds.empty:
-        return go.Figure()
+        return build_empty_figure(theme)
+
+    theme_values = _resolve_figure_theme(theme)
+    dark_mode = theme_values["dark_mode"]
+    axis_color = theme_values["axis_color"]
+    bb_line_color = theme_values["bb_line_color"]
+    kc_line_color = theme_values["kc_line_color"]
+    annotation_color = theme_values["annotation_color"]
 
     ds_full = ds
     ds_plot = ds_full.copy()
@@ -251,7 +328,7 @@ def build_backtest_figure(
             y=ds_plot["bb_up"],
             mode="lines",
             name="BB upper",
-            line=dict(color="gray", width=1),
+            line=dict(color=bb_line_color, width=1),
         ),
         row=1,
         col=1,
@@ -262,7 +339,7 @@ def build_backtest_figure(
             y=ds_plot["bb_low"],
             mode="lines",
             name="BB lower",
-            line=dict(color="gray", width=1),
+            line=dict(color=bb_line_color, width=1),
         ),
         row=1,
         col=1,
@@ -285,7 +362,7 @@ def build_backtest_figure(
             y=ds_plot["kc_up"],
             mode="lines",
             name="KC upper",
-            line=dict(color="blue", width=1),
+            line=dict(color=kc_line_color, width=1),
         ),
         row=1,
         col=1,
@@ -296,7 +373,7 @@ def build_backtest_figure(
             y=ds_plot["kc_low"],
             mode="lines",
             name="KC lower",
-            line=dict(color="blue", width=1),
+            line=dict(color=kc_line_color, width=1),
         ),
         row=1,
         col=1,
@@ -327,8 +404,52 @@ def build_backtest_figure(
 
     rsi_min = params.get("rsi_min", 70)
     rsi_ma_min = params.get("rsi_ma_min", 70)
-    fig.add_hline(y=rsi_min, line_dash="dot", annotation_text="RSI Min", row=2, col=1)
-    fig.add_hline(y=rsi_ma_min, line_dash="dot", annotation_text="RSI MA Min", row=2, col=1)
+    rsi_max = params.get("rsi_max")
+    rsi_ma_max = params.get("rsi_ma_max")
+    fig.add_hline(
+        y=rsi_min,
+        line_dash="dot",
+        line_color=bb_line_color,
+        annotation_text="RSI Min (Short)",
+        annotation_font_color=annotation_color,
+        row=2,
+        col=1,
+    )
+    fig.add_hline(
+        y=rsi_ma_min,
+        line_dash="dot",
+        line_color=bb_line_color,
+        annotation_text="RSI MA Min (Short)",
+        annotation_font_color=annotation_color,
+        row=2,
+        col=1,
+    )
+    if rsi_max is not None:
+        try:
+            fig.add_hline(
+                y=float(rsi_max),
+                line_dash="dot",
+                line_color="green",
+                annotation_text="RSI Max (Long)",
+                annotation_font_color=annotation_color,
+                row=2,
+                col=1,
+            )
+        except (TypeError, ValueError):
+            pass
+    if rsi_ma_max is not None:
+        try:
+            fig.add_hline(
+                y=float(rsi_ma_max),
+                line_dash="dot",
+                line_color="darkgreen",
+                annotation_text="RSI MA Max (Long)",
+                annotation_font_color=annotation_color,
+                row=2,
+                col=1,
+            )
+        except (TypeError, ValueError):
+            pass
 
     if equity_curve is not None and len(equity_curve) > 0:
         if len(ds_plot) < len(equity_curve):
@@ -368,30 +489,86 @@ def build_backtest_figure(
 
     if selected_trade is None:
         if trades_table is not None and not trades_table.empty:
-            fig.add_trace(
-                go.Scattergl(
-                    x=trades_table["EntryTime"],
-                    y=trades_table["Price@Entry"],
-                    mode="markers",
-                    marker=dict(size=8, symbol="triangle-down", color="red"),
-                    name="Short Entry",
-                    showlegend=True,
-                ),
-                row=1,
-                col=1,
-            )
-            fig.add_trace(
-                go.Scattergl(
-                    x=trades_table["ExitTime"],
-                    y=trades_table["Price@Exit"],
-                    mode="markers",
-                    marker=dict(size=8, symbol="circle-dot", color="green"),
-                    name="Exit",
-                    showlegend=True,
-                ),
-                row=1,
-                col=1,
-            )
+            if "Side" in trades_table.columns:
+                short_trades = trades_table[trades_table["Side"] == "Short"]
+                long_trades = trades_table[trades_table["Side"] == "Long"]
+
+                if not short_trades.empty:
+                    fig.add_trace(
+                        go.Scattergl(
+                            x=short_trades["EntryTime"],
+                            y=short_trades["Price@Entry"],
+                            mode="markers",
+                            marker=dict(size=8, symbol="triangle-down", color="crimson"),
+                            name="Short Entry",
+                            showlegend=True,
+                        ),
+                        row=1,
+                        col=1,
+                    )
+                    fig.add_trace(
+                        go.Scattergl(
+                            x=short_trades["ExitTime"],
+                            y=short_trades["Price@Exit"],
+                            mode="markers",
+                            marker=dict(size=8, symbol="circle-open", color="crimson"),
+                            name="Short Exit",
+                            showlegend=True,
+                        ),
+                        row=1,
+                        col=1,
+                    )
+
+                if not long_trades.empty:
+                    fig.add_trace(
+                        go.Scattergl(
+                            x=long_trades["EntryTime"],
+                            y=long_trades["Price@Entry"],
+                            mode="markers",
+                            marker=dict(size=8, symbol="triangle-up", color="seagreen"),
+                            name="Long Entry",
+                            showlegend=True,
+                        ),
+                        row=1,
+                        col=1,
+                    )
+                    fig.add_trace(
+                        go.Scattergl(
+                            x=long_trades["ExitTime"],
+                            y=long_trades["Price@Exit"],
+                            mode="markers",
+                            marker=dict(size=8, symbol="circle-open", color="seagreen"),
+                            name="Long Exit",
+                            showlegend=True,
+                        ),
+                        row=1,
+                        col=1,
+                    )
+            else:
+                fig.add_trace(
+                    go.Scattergl(
+                        x=trades_table["EntryTime"],
+                        y=trades_table["Price@Entry"],
+                        mode="markers",
+                        marker=dict(size=8, symbol="triangle-down", color="red"),
+                        name="Entry",
+                        showlegend=True,
+                    ),
+                    row=1,
+                    col=1,
+                )
+                fig.add_trace(
+                    go.Scattergl(
+                        x=trades_table["ExitTime"],
+                        y=trades_table["Price@Exit"],
+                        mode="markers",
+                        marker=dict(size=8, symbol="circle-dot", color="green"),
+                        name="Exit",
+                        showlegend=True,
+                    ),
+                    row=1,
+                    col=1,
+                )
     else:
         try:
             if "EntryBar" in selected_trade and pd.notna(selected_trade.get("EntryBar")):
@@ -424,20 +601,24 @@ def build_backtest_figure(
             e_px = selected_trade.get("Price@Entry")
             x_px = selected_trade.get("Price@Exit")
 
+            side = selected_trade.get("Side", "Short") if isinstance(selected_trade, dict) else "Short"
+            entry_symbol = "triangle-up" if side == "Long" else "triangle-down"
+            entry_color = "seagreen" if side == "Long" else "crimson"
+
             if pd.notna(e_ts) and pd.notna(e_px):
                 fig.add_trace(
                     go.Scattergl(
                         x=[e_ts],
                         y=[e_px],
                         mode="markers",
-                        marker=dict(size=16, symbol="triangle-down", color="crimson", line=dict(width=1)),
+                        marker=dict(size=16, symbol=entry_symbol, color=entry_color, line=dict(width=1)),
                         name="Selected Entry",
                         showlegend=True,
                     ),
                     row=1,
                     col=1,
                 )
-                fig.add_vline(x=e_ts, line_width=1.5, line_dash="dot", line_color="crimson", row=1, col=1)
+                fig.add_vline(x=e_ts, line_width=1.5, line_dash="dot", line_color=entry_color, row=1, col=1)
 
             if pd.notna(x_ts) and pd.notna(x_px):
                 fig.add_trace(
@@ -456,12 +637,22 @@ def build_backtest_figure(
         except Exception:
             pass
 
+    legend = dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0)
+    if dark_mode:
+        legend.update({
+            "font": {"color": axis_color},
+            "bgcolor": "rgba(12, 18, 26, 0.6)",
+            "bordercolor": "rgba(42, 52, 64, 0.6)",
+            "borderwidth": 1,
+        })
+
     fig.update_layout(
         margin=dict(l=10, r=10, t=40, b=10),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        legend=legend,
         hovermode="x unified",
         height=700,
     )
+    _apply_figure_theme(fig, theme_values)
     if lock_rsi_y:
         fig.update_yaxes(range=[0, 100], fixedrange=True, row=2, col=1)
     fig.update_xaxes(rangeslider=dict(visible=False), row=1, col=1)
