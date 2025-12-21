@@ -20,15 +20,12 @@ from backend.db.jobs import (
 
 def _ensure_import_paths() -> None:
     repo_root = Path(__file__).resolve().parents[2]
-    app_dir = repo_root / "app"
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
-    if str(app_dir) not in sys.path:
-        sys.path.insert(0, str(app_dir))
 
 
 def _dispatch(job_type: str):
-    # Import lazily so sys.path bootstrapping happens before importing app/* modules.
+    # Import lazily so sys.path bootstrapping happens before importing feature modules.
     from backend.tasks import discovery, leaderboard, optimization, patterns, prices
 
     if job_type == "prices_ingest":

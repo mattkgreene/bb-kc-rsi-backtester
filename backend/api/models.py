@@ -14,6 +14,19 @@ JobType = Literal[
 ]
 
 
+class BacktestRequest(BaseModel):
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class BacktestResponse(BaseModel):
+    df: Optional[str] = None
+    ds: Optional[str] = None
+    trades: Optional[str] = None
+    stats: dict[str, Any] = Field(default_factory=dict)
+    equity_curve: list[float] = Field(default_factory=list)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
 class JobCreateRequest(BaseModel):
     job_type: JobType
     payload: dict[str, Any] = Field(default_factory=dict)
@@ -70,4 +83,3 @@ class PricesCoverageResponse(BaseModel):
 
 class DiscoveryStatsResponse(BaseModel):
     stats: dict[str, Any]
-

@@ -9,6 +9,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.cache import get_redis_client, redis_get_json, redis_set_json
 from backend.config import get_settings
 from backend.db.jobs import (
     append_event,
@@ -21,7 +22,13 @@ from backend.db.jobs import (
 )
 from backend.db.leaderboard import get_latest_snapshot, init_leaderboard_db
 
+from backend.db.pg import is_postgres_url, pg_conn
+from backend.features.backtest.service import BacktestService
+from backend.features.market.service import MarketDataService
+
 from backend.api.models import (
+    BacktestRequest,
+    BacktestResponse,
     DiscoveryStatsResponse,
     EnqueueResponse,
     JobCreateRequest,
@@ -37,11 +44,8 @@ from backend.api.models import (
 
 def _ensure_import_paths() -> None:
     repo_root = Path(__file__).resolve().parents[2]
-    app_dir = repo_root / "app"
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
-    if str(app_dir) not in sys.path:
-        sys.path.insert(0, str(app_dir))
 
 
 _ensure_import_paths()
@@ -80,7 +84,13 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     init_jobs_db(settings.backend_db_path)
     init_leaderboard_db(settings.backend_db_path)
+    app.state.redis = get_redis_client(settings.redis_url)
     yield
+    try:
+        if getattr(app.state, "redis", None) is not None:
+            app.state.redis.close()
+    except Exception:
+        pass
 
 
 app = FastAPI(title="BBKC Backend", version="0.1.0", lifespan=lifespan)
@@ -152,6 +162,16 @@ def cancel_job(job_id: int):
     return _job_to_detail(job)
 
 
+@app.post("/v1/backtest", response_model=BacktestResponse)
+def backtest(req: BacktestRequest):
+    try:
+        service = BacktestService(MarketDataService(settings.market_db_path))
+        results = service.run(req.params)
+        return BacktestResponse(**results)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/v1/prices/ingest", response_model=EnqueueResponse)
 def prices_ingest(payload: dict):
     req = JobCreateRequest(job_type="prices_ingest", payload=payload)
@@ -160,27 +180,45 @@ def prices_ingest(payload: dict):
 
 @app.get("/v1/prices/coverage", response_model=PricesCoverageResponse)
 def prices_coverage(limit: int = Query(default=500, ge=1, le=5000)):
-    db_path = settings.market_db_path
-    if not db_path.exists():
-        return PricesCoverageResponse(coverage=[])
+    db_ref = settings.market_db_path
+    if isinstance(db_ref, str) and is_postgres_url(db_ref):
+        with pg_conn(db_ref) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT exchange, symbol, timeframe,
+                       MIN(ts) AS min_ts, MAX(ts) AS max_ts,
+                       COUNT(*) AS rows_count
+                FROM ohlcv_cache
+                GROUP BY exchange, symbol, timeframe
+                ORDER BY rows_count DESC
+                LIMIT %s
+                """,
+                (int(limit),),
+            )
+            rows = cur.fetchall()
+    else:
+        db_path = Path(db_ref) if isinstance(db_ref, str) else db_ref
+        if not db_path.exists():
+            return PricesCoverageResponse(coverage=[])
 
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    try:
-        rows = conn.execute(
-            """
-            SELECT exchange, symbol, timeframe,
-                   MIN(ts) AS min_ts, MAX(ts) AS max_ts,
-                   COUNT(*) AS rows_count
-            FROM ohlcv_cache
-            GROUP BY exchange, symbol, timeframe
-            ORDER BY rows_count DESC
-            LIMIT ?
-            """,
-            (int(limit),),
-        ).fetchall()
-    finally:
-        conn.close()
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                """
+                SELECT exchange, symbol, timeframe,
+                       MIN(ts) AS min_ts, MAX(ts) AS max_ts,
+                       COUNT(*) AS rows_count
+                FROM ohlcv_cache
+                GROUP BY exchange, symbol, timeframe
+                ORDER BY rows_count DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            ).fetchall()
+        finally:
+            conn.close()
 
     coverage = []
     for r in rows:
@@ -217,10 +255,17 @@ def leaderboard_refresh(payload: Optional[dict] = None):
 
 @app.get("/v1/leaderboard", response_model=LeaderboardResponse)
 def leaderboard_latest():
+    cached = redis_get_json(getattr(app.state, "redis", None), "leaderboard:latest")
+    if isinstance(cached, dict) and cached.get("payload") is not None:
+        return cached
+
     snapshot = get_latest_snapshot(settings.backend_db_path)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="No leaderboard snapshot available yet")
-    return LeaderboardResponse(snapshot_id=snapshot.id, created_at=snapshot.created_at, payload=snapshot.payload)
+
+    resp = LeaderboardResponse(snapshot_id=snapshot.id, created_at=snapshot.created_at, payload=snapshot.payload).model_dump()
+    redis_set_json(getattr(app.state, "redis", None), "leaderboard:latest", resp, ttl_seconds=10)
+    return resp
 
 
 @app.post("/v1/patterns/refresh", response_model=EnqueueResponse)
@@ -231,12 +276,17 @@ def patterns_refresh(payload: Optional[dict] = None):
 
 @app.get("/v1/patterns", response_model=PatternsResponse)
 def patterns(min_confidence: float = Query(default=0.3, ge=0.0, le=1.0)):
-    from discovery.database import DiscoveryDatabase
+    cache_key = f"patterns:min_confidence={float(min_confidence):.4f}"
+    cached = redis_get_json(getattr(app.state, "redis", None), cache_key)
+    if isinstance(cached, dict) and isinstance(cached.get("rules"), list):
+        return cached
+
+    from backend.features.discovery.database import DiscoveryDatabase
 
     db = DiscoveryDatabase(str(settings.discovery_db_path))
     db.initialize()
     rules = db.get_rules(min_confidence=float(min_confidence))
-    return PatternsResponse(
+    resp = PatternsResponse(
         rules=[
             {
                 "rule_id": r.rule_id,
@@ -252,12 +302,20 @@ def patterns(min_confidence: float = Query(default=0.3, ge=0.0, le=1.0)):
             for r in rules
         ]
     )
+    redis_set_json(getattr(app.state, "redis", None), cache_key, resp.model_dump(), ttl_seconds=60)
+    return resp
 
 
 @app.get("/v1/discovery/stats", response_model=DiscoveryStatsResponse)
 def discovery_stats():
-    from discovery.database import DiscoveryDatabase
+    cached = redis_get_json(getattr(app.state, "redis", None), "discovery:stats")
+    if isinstance(cached, dict) and cached.get("stats") is not None:
+        return cached
+
+    from backend.features.discovery.database import DiscoveryDatabase
 
     db = DiscoveryDatabase(str(settings.discovery_db_path))
     db.initialize()
-    return DiscoveryStatsResponse(stats=db.get_statistics())
+    resp = DiscoveryStatsResponse(stats=db.get_statistics()).model_dump()
+    redis_set_json(getattr(app.state, "redis", None), "discovery:stats", resp, ttl_seconds=30)
+    return resp

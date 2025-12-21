@@ -6,9 +6,7 @@ import pandas as pd
 
 from backend.config import Settings
 from backend.processing.spark import get_spark_session
-
-from core.data import fetch_ohlcv_range_db_cached
-from core.ohlcv_cache import get_cache_bounds
+from backend.features.market.service import MarketDataService
 
 
 def run_job(
@@ -26,8 +24,10 @@ def run_job(
     page_limit = int(payload.get("page_limit") or 1000)
     sleep_mult = float(payload.get("sleep_mult") or 1.0)
 
+    market = MarketDataService(settings.market_db_path)
+
     report_progress(0, 1, "Fetching + caching OHLCV")
-    df = fetch_ohlcv_range_db_cached(
+    df = market.fetch_range(
         exchange,
         symbol,
         timeframe,
@@ -35,10 +35,9 @@ def run_job(
         end_ts=end_ts,
         page_limit=page_limit,
         sleep_mult=sleep_mult,
-        db_path=settings.market_db_path,
     )
 
-    bounds = get_cache_bounds(exchange, symbol, timeframe, settings.market_db_path)
+    bounds = market.coverage_bounds(exchange, symbol, timeframe)
     result: dict[str, Any] = {
         "exchange": exchange,
         "symbol": symbol,
@@ -76,4 +75,3 @@ def run_job(
 
     report_progress(1, 1, "Ingestion complete")
     return result
-
