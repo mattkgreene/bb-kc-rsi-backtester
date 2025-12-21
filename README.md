@@ -1,6 +1,6 @@
 # BB + KC + RSI Short Strategy Backtester
 
-A comprehensive backtesting application for a **short-only mean-reversion strategy** that combines Bollinger Bands (BB), Keltner Channels (KC), and RSI indicators. Built with Streamlit for an interactive UI and supports multiple cryptocurrency exchanges via CCXT.
+A comprehensive backtesting application for a **short-only mean-reversion strategy** that combines Bollinger Bands (BB), Keltner Channels (KC), and RSI indicators. Built with Dash for an interactive UI and supports multiple cryptocurrency exchanges via CCXT.
 
 ## Strategy Overview
 
@@ -25,33 +25,23 @@ This backtester implements a **short-selling mean-reversion strategy** based on 
 bb-kc-rsi-backtester/
 ├── backend/               # FastAPI + background workers (queued jobs)
 │   ├── api/               # API routes + request/response models
-│   ├── db/                # SQLite-backed job queue + snapshots
+│   ├── db/                # DB-backed job queue + snapshots (Postgres preferred)
+│   ├── features/          # Backtest/market/optimization/discovery logic
 │   ├── tasks/             # Job handlers (optimize/discover/patterns/etc)
 │   ├── worker/            # Worker process (polls + executes jobs)
 │   ├── Dockerfile         # Backend API service image
 │   └── Dockerfile.worker  # Backend worker image
-├── app/
-│   ├── backtest/
-│   │   └── engine.py      # Core backtesting logic, strategy loop, stats
-│   ├── core/
-│   │   ├── data.py        # OHLCV data fetching via CCXT
-│   │   ├── indicators.py  # Technical indicators (BB, KC, RSI, ATR)
-│   │   ├── presets.py     # Strategy preset configurations
-│   │   └── utils.py       # Shared utilities
-│   ├── optimization/
-│   │   └── grid_search.py # Parameter optimization via grid search
-│   └── ui/
-│       └── app.py         # Streamlit dashboard
 ├── frontend/
+│   ├── features/          # UI-only helpers (presets, optimization helpers)
+│   ├── ui/                # Dash UI
 │   └── Dockerfile         # Dash UI image
 ├── docs/
 │   ├── STRATEGIES.md      # Strategy preset documentation
 │   └── OPTIMIZATION.md    # Optimization guide
-├── docker/
-│   └── streamlit.Dockerfile
 ├── requirements/
 │   ├── base.txt           # Core dependencies
-│   └── streamlit.txt      # UI dependencies
+│   ├── dash.txt           # Dash UI dependencies
+│   └── backend.txt        # Backend API/worker dependencies
 ├── docker-compose.yml
 ├── railway.toml           # Railway deployment config
 └── README.md
@@ -113,17 +103,11 @@ For detailed optimization guidance, see [docs/OPTIMIZATION.md](docs/OPTIMIZATION
 ### Data Flow
 
 ```
-User Input → Streamlit UI → Data Fetcher (CCXT) → Exchange API
-                               ↓
-                          Raw OHLCV Data
-                               ↓
-                      Indicator Calculation (BB, KC, RSI)
-                               ↓
-                      Backtest Engine (Strategy Loop)
-                               ↓
-                      Stats + Trades + Dataset
-                               ↓
-                      Charts + Metrics + Trade Table
+User Input → Dash UI → Backend API (enqueue jobs) → Postgres queue
+                          ↓                           ↓
+                    /v1/backtest                Worker executes jobs
+                          ↓                           ↓
+                     Charts + tables        Leaderboard/Patterns/Job status
 ```
 
 ## Installation
@@ -146,12 +130,11 @@ User Input → Streamlit UI → Data Fetcher (CCXT) → Exchange API
 
 3. **Install dependencies**
    ```bash
-   pip install -r requirements/base.txt -r requirements/streamlit.txt
-   ```
-
-   For Dash:
-   ```bash
    pip install -r requirements/base.txt -r requirements/dash.txt
+   ```
+   For backend:
+   ```bash
+   pip install -r requirements/base.txt -r requirements/backend.txt
    ```
 
 4. **Run the Dash application**
@@ -159,19 +142,12 @@ User Input → Streamlit UI → Data Fetcher (CCXT) → Exchange API
    python frontend/ui/dash_app.py
    ```
 
-   Legacy entrypoint (shim):
-   ```bash
-   python app/ui/dash_app.py
-   ```
-
-   Optimization/Discovery/Leaderboard/Patterns are now executed via the backend job API.
+   Backtests, optimization, discovery, leaderboard, and patterns are executed via the backend API.
    Run the backend services (step 5) and set `BACKEND_URL` (default: `http://localhost:8000`).
-
-   Optional: enable frontend market cache warmup by setting `WARM_MARKET_CACHE=1`.
 
 5. **Run the backend API + worker (for queued jobs)**
    ```bash
-   pip install -r requirements/base.txt -r requirements/backend.txt
+   # Ensure DATABASE_URL / REDIS_URL point to running services
    uvicorn backend.api.main:app --host 0.0.0.0 --port 8000
    ```
    In another terminal:
@@ -179,26 +155,13 @@ User Input → Streamlit UI → Data Fetcher (CCXT) → Exchange API
    python -m backend.worker.main
    ```
 
-6. **Run the Streamlit application (rollback path)**
-   ```bash
-   cd app
-   streamlit run ui/app.py
-   ```
-
 ### Docker
 
 ```bash
-docker compose up --build ui
+docker compose up --build
 ```
 
 The Dash app will be available at `http://localhost:8050`
-
-To run the Streamlit UI instead:
-```bash
-docker compose up --build streamlit
-```
-
-The Streamlit app will be available at `http://localhost:8501`
 
 ## Configuration Parameters
 
@@ -305,7 +268,13 @@ This repo supports a monorepo-style split deployment:
 
 1. **Frontend service (Dash UI)**: use `frontend/Dockerfile` (default via `railway.toml`).
 2. **Backend API service**: use `backend/Dockerfile` (example config: `backend/railway.toml`).
-3. **Backend worker service**: use `backend/Dockerfile.worker` (example config: `backend/railway.worker.toml`).
+3. **Backend worker service (recommended)**: use `backend/Dockerfile.worker` (example config: `backend/railway.worker.toml`).
+
+Add Railway plugins:
+- **Postgres** → sets `DATABASE_URL` (required for multi-service deployments).
+- **Redis** → sets `REDIS_URL` (optional; enables API caching).
+
+If you want only a single backend service, set `RUN_WORKER=1` on the backend service to run the worker inside the same container.
 
 ### Environment Variables
 
@@ -315,9 +284,9 @@ This repo supports a monorepo-style split deployment:
 | PYTHONPATH | Python module path | `/workspace:/workspace/app` |
 | BACKEND_URL | Backend API base URL | `http://localhost:8000` |
 | WARM_MARKET_CACHE | Warm market cache at frontend startup | `false` |
-| BACKEND_DB_PATH | Backend jobs DB (SQLite) | `data/backend.db` |
-| DISCOVERY_DB_PATH | Discovery results DB (SQLite) | `data/discovery.db` |
-| MARKET_DB_PATH | Market data cache DB (SQLite) | `data/market_data.db` |
+| DATABASE_URL | Postgres URL (jobs, discovery, market data, snapshots) | unset (falls back to SQLite files) |
+| REDIS_URL | Redis URL for caching (optional) | unset |
+| RUN_WORKER | Run a worker inside the backend container | unset |
 | USE_SPARK | Enable optional Spark integration | `false` |
 
 ## Dependencies
@@ -331,10 +300,9 @@ This repo supports a monorepo-style split deployment:
 - bokeh - Visualization support
 - matplotlib - Plotting
 
-### UI (`requirements/streamlit.txt`)
-- streamlit - Web application framework
+### UI (`requirements/dash.txt`)
+- dash - Web application framework
 - plotly - Interactive charts
-- streamlit-aggrid - Advanced data tables
 
 ## Usage Examples
 
@@ -400,5 +368,5 @@ MIT License - See LICENSE file for details.
 ## Acknowledgments
 
 - CCXT library for exchange connectivity
-- Streamlit for the interactive UI framework
+- Dash for the interactive UI framework
 - Plotly for charting capabilities

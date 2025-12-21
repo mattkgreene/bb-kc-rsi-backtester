@@ -261,6 +261,7 @@ param_grid = create_custom_grid(
     steps=4,
     include_entry_modes=True,
     include_exit_levels=False,
+    stop_mode=current_params.get("stop_mode", "Fixed %"),
 )
 
 # Run optimization
@@ -290,6 +291,8 @@ custom_grid = {
 
 results = run_grid_search(df, custom_grid, base_params)
 ```
+
+When `stop_mode` is `"ATR"`, use `stop_atr_mult` in the grid instead of `stop_pct`.
 
 ---
 
